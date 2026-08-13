@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name="messenger_status",
@@ -16,10 +16,10 @@ public class MessengerStatus {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id ;
-    @Column(name="delivered_at")
-    private LocalDate deliveredAt ;
-    @Column(name="seen_at")
-    private LocalDate seenAt ;
+    @Column(name="delivered_at", columnDefinition = "datetime(6)")
+    private LocalDateTime deliveredAt ;
+    @Column(name="seen_at", columnDefinition = "datetime(6)")
+    private LocalDateTime seenAt ;
     @ManyToOne
     @JoinColumn(name="user_id")
     private User user  ;

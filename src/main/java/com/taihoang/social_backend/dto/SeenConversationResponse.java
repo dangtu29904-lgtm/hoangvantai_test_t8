@@ -1,13 +1,13 @@
 package com.taihoang.social_backend.dto;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
-public record DeliveredResponse(
-        Long messageId,
+public record SeenConversationResponse(
         Long conversationId,
         Long recipientId,
         String recipientName,
-        LocalDateTime deliveredAt
+        LocalDateTime seenAt,
+        List<Long> messageIds
 ) {
 }

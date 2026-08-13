@@ -14,6 +14,12 @@ import com.taihoang.social_backend.dto.DeliveredResponse;
 import com.taihoang.social_backend.dto.DeliveredResult;
 import com.taihoang.social_backend.dto.MessageRequest;
 import com.taihoang.social_backend.dto.MessageResponse;
+import com.taihoang.social_backend.dto.SeenRequest;
+import com.taihoang.social_backend.dto.SeenConversationRequest;
+import com.taihoang.social_backend.dto.SeenConversationResponse;
+import com.taihoang.social_backend.dto.SeenConversationResult;
+import com.taihoang.social_backend.dto.SeenResponse;
+import com.taihoang.social_backend.dto.SeenResult;
 import com.taihoang.social_backend.dto.SendMessageResult;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
@@ -44,17 +50,17 @@ public class MessageService {
     @Transactional
     public SendMessageResult handleSendMessage(Long senderId, MessageRequest request) {
         User sender = userRepository.findById(senderId)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy user gửi tin nhắn"));
+                .orElseThrow(() -> new IllegalArgumentException("Khong tim thay user gui tin nhan"));
 
         Conversations conversation = conversationRepository.findByIdForUpdate(request.conversationId())
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy conversation"));
+                .orElseThrow(() -> new IllegalArgumentException("Khong tim thay conversation"));
 
         boolean isMember = conversationMemberRepository.existsByConversationIdAndUserId(
                 conversation.getId(),
                 sender.getId()
         );
         if (!isMember) {
-            throw new IllegalArgumentException("User không thuộc conversation này");
+            throw new IllegalArgumentException("User khong thuoc conversation nay");
         }
 
         return messengerRepository
@@ -66,14 +72,14 @@ public class MessageService {
     @Transactional
     public DeliveredResult handleDelivered(Long recipientId, DeliveredRequest request) {
         User recipient = userRepository.findById(recipientId)
-                .orElseThrow(() -> new IllegalArgumentException("KhÃ´ng tÃ¬m tháº¥y user nháº­n tin"));
+                .orElseThrow(() -> new IllegalArgumentException("Khong tim thay user nhan tin"));
 
         MessengerStatus status = messengerStatusRepository
                 .findByMessengerIdAndUserId(request.messageId(), recipient.getId())
-                .orElseThrow(() -> new IllegalArgumentException("KhÃ´ng tÃ¬m tháº¥y status cáº§n delivered"));
+                .orElseThrow(() -> new IllegalArgumentException("Khong tim thay status can delivered"));
 
         if (status.getDeliveredAt() == null) {
-            status.setDeliveredAt(java.time.LocalDate.now());
+            status.setDeliveredAt(LocalDateTime.now());
             messengerStatusRepository.save(status);
         }
 
@@ -87,6 +93,88 @@ public class MessageService {
         );
 
         return new DeliveredResult(messenger.getUser().getEmail(), response);
+    }
+
+    @Transactional
+    public SeenResult handleSeen(Long recipientId, SeenRequest request) {
+        User recipient = userRepository.findById(recipientId)
+                .orElseThrow(() -> new IllegalArgumentException("Khong tim thay user nhan tin"));
+
+        MessengerStatus status = messengerStatusRepository
+                .findByMessengerIdAndUserId(request.messageId(), recipient.getId())
+                .orElseThrow(() -> new IllegalArgumentException("Khong tim thay status can seen"));
+
+        if (status.getDeliveredAt() == null) {
+            status.setDeliveredAt(LocalDateTime.now());
+        }
+        if (status.getSeenAt() == null) {
+            LocalDateTime seenAt = LocalDateTime.now();
+            status.setSeenAt(seenAt);
+            Messenger messenger = status.getMessenger();
+            if (messenger.getSeenAt() == null) {
+                messenger.setSeenAt(seenAt);
+            }
+            messengerStatusRepository.save(status);
+        }
+
+        Messenger messenger = status.getMessenger();
+        SeenResponse response = new SeenResponse(
+                messenger.getId(),
+                messenger.getConversation().getId(),
+                recipient.getId(),
+                recipient.getUserName(),
+                status.getDeliveredAt(),
+                status.getSeenAt()
+        );
+
+        return new SeenResult(messenger.getUser().getEmail(), response);
+    }
+
+    @Transactional
+    public SeenConversationResult handleSeenConversation(Long recipientId, SeenConversationRequest request) {
+        User recipient = userRepository.findById(recipientId)
+                .orElseThrow(() -> new IllegalArgumentException("Khong tim thay user nhan tin"));
+
+        boolean isMember = conversationMemberRepository.existsByConversationIdAndUserId(
+                request.conversationId(),
+                recipient.getId()
+        );
+        if (!isMember) {
+            throw new IllegalArgumentException("User khong thuoc conversation nay");
+        }
+
+        List<MessengerStatus> statuses = messengerStatusRepository
+                .findUnseenByConversationIdAndUserId(request.conversationId(), recipient.getId());
+
+        LocalDateTime seenAt = LocalDateTime.now();
+        for (MessengerStatus status : statuses) {
+            if (status.getDeliveredAt() == null) {
+                status.setDeliveredAt(seenAt);
+            }
+            status.setSeenAt(seenAt);
+            if (status.getMessenger().getSeenAt() == null) {
+                status.getMessenger().setSeenAt(seenAt);
+            }
+        }
+        if (!statuses.isEmpty()) {
+            messengerStatusRepository.saveAll(statuses);
+        }
+
+        SeenConversationResponse response = new SeenConversationResponse(
+                request.conversationId(),
+                recipient.getId(),
+                recipient.getUserName(),
+                seenAt,
+                statuses.stream()
+                        .map(status -> status.getMessenger().getId())
+                        .toList()
+        );
+
+        String senderDestination = statuses.isEmpty()
+                ? null
+                : statuses.get(0).getMessenger().getUser().getEmail();
+
+        return new SeenConversationResult(senderDestination, response);
     }
 
     private SendMessageResult createMessage(User sender, Conversations conversation, MessageRequest request) {
