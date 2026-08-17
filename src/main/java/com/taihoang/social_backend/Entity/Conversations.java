@@ -18,6 +18,8 @@ public class Conversations {
     @Enumerated(EnumType.STRING)
     @Column(name="type" , nullable = false)
     private type_chat type ;
+    @Column(name = "name", length = 100)
+    private String name;
     @Column(name = "create_at")
     private LocalDate createAt ;
 

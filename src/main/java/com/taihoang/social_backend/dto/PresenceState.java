@@ -5,7 +5,7 @@ import java.time.LocalDateTime;
 public record PresenceState(
         Long userId,
         String status,
-        String sessionId,
+        int activeSessionCount,
         LocalDateTime lastSeenAt
 ) {
 }

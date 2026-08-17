@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.security.Principal;
 
 @RestController
-@RequestMapping("/conversations")
+@RequestMapping("/user/conversations")
 @RequiredArgsConstructor
 public class ConversationStatusController {
     private final MessageService messageService;

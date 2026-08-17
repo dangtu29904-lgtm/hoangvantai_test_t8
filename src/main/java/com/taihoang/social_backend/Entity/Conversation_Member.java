@@ -17,6 +17,13 @@ public class Conversation_Member {
     private Long id ;
     @Column(name = "joined_at")
     private LocalDate joinAt ;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "member_role")
+    private MemberRole memberRole = MemberRole.MEMBER;
+
+    public enum MemberRole {
+        ADMIN, MEMBER
+    };
     @ManyToOne
     @JoinColumn(name="conversation_id")
     private Conversations conversation ;

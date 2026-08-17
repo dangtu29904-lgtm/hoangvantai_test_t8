@@ -1,10 +1,10 @@
 package com.taihoang.social_backend.configure;
 
+import com.taihoang.social_backend.Service.PresenceNotificationService;
 import com.taihoang.social_backend.Service.PresenceService;
 import com.taihoang.social_backend.security.AuthenticatedUserDetails;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
-import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
@@ -16,6 +16,7 @@ import java.security.Principal;
 @RequiredArgsConstructor
 public class WebSocketPresenceListener {
     private final PresenceService presenceService;
+    private final PresenceNotificationService presenceNotificationService;
 
     @EventListener
     public void onSessionConnected(SessionConnectedEvent event) {
@@ -31,15 +32,21 @@ public class WebSocketPresenceListener {
 
     private void touchPresence(Principal principal, String sessionId) {
         Long userId = extractUserId(principal);
-        if (userId != null) {
-            presenceService.markOnline(userId, sessionId);
+        if (userId != null && sessionId != null && !sessionId.isBlank()) {
+            boolean becameOnline = presenceService.markOnline(userId, sessionId);
+            if (becameOnline) {
+                presenceNotificationService.notifyContacts(presenceService.getPresence(userId));
+            }
         }
     }
 
     private void touchOffline(Principal principal, String sessionId) {
         Long userId = extractUserId(principal);
-        if (userId != null) {
-            presenceService.markOffline(userId, sessionId);
+        if (userId != null && sessionId != null && !sessionId.isBlank()) {
+            boolean becameOffline = presenceService.markOffline(userId, sessionId);
+            if (becameOffline) {
+                presenceNotificationService.notifyContacts(presenceService.getPresence(userId));
+            }
         }
     }
 
