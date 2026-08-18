@@ -1,0 +1,127 @@
+import { Client } from '@stomp/stompjs';
+
+class WebSocketService {
+  constructor() {
+    this.client = null;
+    this.subscribers = new Map(); // topic -> [callbacks]
+    this.activeSubscriptions = new Map(); // topic -> subscription object
+    this.presenceHeartbeatTimer = null;
+  }
+
+  connect(token, onConnect, onError) {
+    if (this.client && this.client.connected) return;
+
+    this.client = new Client({
+      brokerURL: 'ws://localhost:8080/ws',
+      connectHeaders: {
+        Authorization: `Bearer ${token}`
+      },
+      reconnectDelay: 5000,
+      heartbeatIncoming: 10000,
+      heartbeatOutgoing: 10000,
+      onConnect: () => {
+        console.log('Connected to STOMP');
+        this._startPresenceHeartbeat();
+        if (onConnect) onConnect();
+        this._resubscribeAll();
+      },
+      onStompError: (frame) => {
+        console.error('Broker reported error: ' + frame.headers['message']);
+        console.error('Additional details: ' + frame.body);
+        if (onError) onError(frame);
+      },
+      onWebSocketClose: () => {
+        console.log('WebSocket closed');
+        this._stopPresenceHeartbeat();
+      }
+    });
+
+    this.client.activate();
+  }
+
+  disconnect() {
+    if (this.client) {
+      this.client.deactivate();
+      this.client = null;
+      this.subscribers.clear();
+      this.activeSubscriptions.clear();
+    }
+    this._stopPresenceHeartbeat();
+  }
+
+  _startPresenceHeartbeat() {
+    this._stopPresenceHeartbeat();
+    this.presenceHeartbeatTimer = setInterval(() => {
+      if (this.client && this.client.connected) {
+        this.client.publish({
+          destination: '/app/presence.heartbeat',
+          body: JSON.stringify({})
+        });
+      }
+    }, 30000);
+  }
+
+  _stopPresenceHeartbeat() {
+    if (this.presenceHeartbeatTimer) {
+      clearInterval(this.presenceHeartbeatTimer);
+      this.presenceHeartbeatTimer = null;
+    }
+  }
+
+  subscribe(topic, callback) {
+    if (!this.subscribers.has(topic)) {
+      this.subscribers.set(topic, []);
+    }
+    this.subscribers.get(topic).push(callback);
+
+    if (this.client && this.client.connected && !this.activeSubscriptions.has(topic)) {
+      const sub = this.client.subscribe(topic, (message) => {
+        const body = JSON.parse(message.body);
+        this.subscribers.get(topic).forEach(cb => cb(body));
+      });
+      this.activeSubscriptions.set(topic, sub);
+    }
+  }
+
+  unsubscribe(topic, callback) {
+    const topicSubscribers = this.subscribers.get(topic);
+    if (topicSubscribers) {
+      this.subscribers.set(topic, topicSubscribers.filter(cb => cb !== callback));
+      
+      if (this.subscribers.get(topic).length === 0) {
+        const sub = this.activeSubscriptions.get(topic);
+        if (sub) {
+          sub.unsubscribe();
+          this.activeSubscriptions.delete(topic);
+        }
+        this.subscribers.delete(topic);
+      }
+    }
+  }
+
+  _resubscribeAll() {
+    this.activeSubscriptions.clear();
+    for (const [topic, callbacks] of this.subscribers.entries()) {
+      if (callbacks.length > 0) {
+        const sub = this.client.subscribe(topic, (message) => {
+          const body = JSON.parse(message.body);
+          this.subscribers.get(topic).forEach(cb => cb(body));
+        });
+        this.activeSubscriptions.set(topic, sub);
+      }
+    }
+  }
+
+  send(destination, body) {
+    if (this.client && this.client.connected) {
+      this.client.publish({
+        destination,
+        body: JSON.stringify(body)
+      });
+    } else {
+      console.warn('Cannot send STOMP message, not connected');
+    }
+  }
+}
+
+export const wsService = new WebSocketService();
