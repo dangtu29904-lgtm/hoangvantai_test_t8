@@ -61,16 +61,26 @@ public interface ConversationMemberRepository extends JpaRepository<Conversation
             @Param("conversationIds") List<Long> conversationIds
     );
     @Query("""
-        select cm
-        from Conversation_Member cm
-        join fetch cm.user
-        where cm.conversation.id = :conversationId
-        order by cm.id asc
-        """)
+            select cm
+            from Conversation_Member cm
+            join fetch cm.user
+            where cm.conversation.id = :conversationId
+            order by cm.id asc
+            """)
     List<Conversation_Member> findMembersByConversationId(
             @Param("conversationId") Long conversationId
     );
-    List<String> findPresenceRecipientDestinations(Long userId);
+
+    @Query("""
+            select distinct u.email
+            from Conversation_Member cm
+            join cm.conversation c
+            join c.conversationMembers cm2
+            join cm2.user u
+            where cm.user.id = :userId
+              and u.id <> :userId
+            """)
+    List<String> findPresenceRecipientDestinations(@Param("userId") Long userId);
     interface ConversationCursorView {
         Long getConversationId();
 

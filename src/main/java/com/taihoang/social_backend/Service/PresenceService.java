@@ -104,10 +104,10 @@ public class PresenceService {
     }
 
     private LocalDateTime readLastActiveAt(Long userId) {
-        String value = redisTemplate.opsForValue().get(lastActiveKey(userId));
-        if (value == null || value.isBlank()) {
-            return null;
-        }
+        Object raw = redisTemplate.opsForValue().get(lastActiveKey(userId));
+        if (raw == null) return null;
+        String value = raw.toString();
+        if (value.isBlank()) return null;
 
         try {
             return LocalDateTime.parse(value);
