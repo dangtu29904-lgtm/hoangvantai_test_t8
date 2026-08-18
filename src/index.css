@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@config "../tailwind.config.js";
+
+body {
+  margin: 0;
+  padding: 0;
+  color: var(--color-gray-900);
+  background-color: var(--color-gray-50);
+  overflow: hidden; /* App-like feel */
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent; 
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1; 
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8; 
+}
