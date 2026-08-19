@@ -21,6 +21,26 @@ public class User {
     private String email ;
     @Column(name="password")
     private String password ;
+
+    // ===== PROFILE =====
+
+    @Column(name = "avatar_url", length = 500)
+    private String avatarUrl;
+
+    @Column(name = "cover_url", length = 500)
+    private String coverUrl;
+
+    @Column(name = "bio", length = 500)
+    private String bio;
+
+    @Column(name = "date_of_birth")
+    private LocalDate dateOfBirth;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "gender")
+    private Gender gender;
+
+
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false)
     private Role role = Role.USER ;
@@ -46,5 +66,10 @@ public class User {
 
     public enum Role {
         USER, ADMIN
+    }
+    public enum Gender {
+        MALE,
+        FEMALE,
+        OTHER
     }
 }
