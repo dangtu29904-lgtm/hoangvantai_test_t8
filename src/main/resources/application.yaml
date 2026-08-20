@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: social_backend
+  data:
+    redis:
+      host: localhost
+      post: 6379
+      timeout: 60000ms
+      client_type: lettuce
+
+
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/social_tt?useSSL=false
+    username: root
+    password: "01112004"
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:change-this-secret-to-at-least-32-characters}
+    expiration-ms: 86400000
+

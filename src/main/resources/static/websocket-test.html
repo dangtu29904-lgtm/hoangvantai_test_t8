@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket STOMP Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 24px auto;
+            padding: 0 16px;
+            background: #f6f7f9;
+            color: #1f2937;
+        }
+        label { display: block; margin: 12px 0 6px; font-weight: 700; }
+        input, textarea, button { width: 100%; box-sizing: border-box; font: inherit; }
+        input, textarea { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #ffffff; }
+        button { margin-top: 10px; padding: 10px 12px; border: 0; border-radius: 6px; background: #2563eb; color: #ffffff; cursor: pointer; font-weight: 700; }
+        button.secondary { background: #475569; }
+        button.danger { background: #dc2626; }
+        .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        pre { min-height: 220px; white-space: pre-wrap; padding: 12px; border-radius: 6px; background: #111827; color: #d1fae5; overflow: auto; }
+    </style>
+</head>
+<body>
+<h1>WebSocket STOMP Test</h1>
+
+<label for="url">WebSocket URL</label>
+<input id="url" value="ws://localhost:8080/ws">
+
+<label for="token">JWT token</label>
+<textarea id="token" rows="4" placeholder="Paste token, khong can ghi Bearer"></textarea>
+
+<div class="grid">
+    <div>
+        <label for="conversationId">Conversation ID</label>
+        <input id="conversationId" value="1">
+    </div>
+    <div>
+        <label for="userName">User name</label>
+        <input id="userName" value="tai">
+    </div>
+</div>
+
+<label for="content">Message content</label>
+<input id="content" value="hello websocket">
+
+<div class="grid">
+    <button onclick="connectSocket()">1. Connect STOMP</button>
+    <button class="secondary" onclick="subscribeTopic()">2. Subscribe</button>
+    <button class="secondary" onclick="sendMessage()">3. Send Message</button>
+    <button class="secondary" onclick="openChat()">4. Open Chat</button>
+    <button class="danger" onclick="disconnectSocket()">Disconnect</button>
+</div>
+
+<h2>Log</h2>
+<pre id="log"></pre>
+
+<script>
+    let socket;
+    const NULL_CHAR = String.fromCharCode(0);
+    const HEARTBEAT_INTERVAL_MS = 5000;
+    const RECONNECT_BASE_DELAY_MS = 1000;
+    const RECONNECT_MAX_DELAY_MS = 30000;
+    let chatOpened = false;
+    const pendingSeenMessageIds = new Set();
+    let heartbeatTimer = null;
+    let stompConnected = false;
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    let reconnectAllowed = false;
+    let activeConversationId = null;
+    let suppressReconnectOnce = false;
+
+    const urlInput = document.getElementById("url");
+    if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        urlInput.value = `ws://${location.hostname}:8080/ws`;
+    }
+
+    function log(message) {
+        const logBox = document.getElementById("log");
+        logBox.textContent += `[${new Date().toLocaleTimeString()}] ${message}\n`;
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function sendFrame(frame) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            log("Socket chua open");
+            return;
+        }
+        socket.send(frame + NULL_CHAR);
+        log("SEND FRAME:\n" + frame.replaceAll("\n", "\\n\n"));
+    }
+
+    function sendHeartbeat() {
+        if (!socket || socket.readyState !== WebSocket.OPEN || !stompConnected) {
+            return;
+        }
+        socket.send("\n");
+        log("SEND HEARTBEAT");
+    }
+
+    function startHeartbeat() {
+        stopHeartbeat();
+        heartbeatTimer = window.setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+    }
+
+    function stopHeartbeat() {
+        if (heartbeatTimer !== null) {
+            window.clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+        }
+    }
+
+    function stopReconnectTimer() {
+        if (reconnectTimer !== null) {
+            window.clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+    }
+
+    function resetReconnectState() {
+        stopReconnectTimer();
+        reconnectAttempts = 0;
+    }
+
+    function scheduleReconnect() {
+        if (!reconnectAllowed || reconnectTimer !== null) {
+            return;
+        }
+
+        const delay = Math.min(
+            RECONNECT_MAX_DELAY_MS,
+            RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts)
+        );
+        reconnectAttempts += 1;
+        log(`Reconnect sau ${Math.round(delay / 1000)}s`);
+
+        reconnectTimer = window.setTimeout(() => {
+            reconnectTimer = null;
+            connectSocket(true);
+        }, delay);
+    }
+
+    function parseStompFrame(raw) {
+        const normalized = String(raw).replaceAll(NULL_CHAR, "");
+        const parts = normalized.split("\n\n");
+        const headerLines = (parts.shift() || "").split("\n").filter(Boolean);
+        const body = parts.join("\n\n");
+        const headers = {};
+
+        for (const line of headerLines.slice(1)) {
+            const separatorIndex = line.indexOf(":");
+            if (separatorIndex > -1) {
+                const key = line.slice(0, separatorIndex).trim();
+                const value = line.slice(separatorIndex + 1).trim();
+                headers[key] = value;
+            }
+        }
+
+        return { command: headerLines[0] || "", headers, body };
+    }
+
+    function sendDelivered(messageId) {
+        sendFrame([
+            "SEND",
+            "destination:/app/chat.delivered",
+            "content-type:application/json",
+            "",
+            JSON.stringify({ messageId })
+        ].join("\n"));
+    }
+
+    function sendSeen(messageId) {
+        sendFrame([
+            "SEND",
+            "destination:/app/chat.seen",
+            "content-type:application/json",
+            "",
+            JSON.stringify({ messageId })
+        ].join("\n"));
+    }
+
+    function flushSeenQueue() {
+        for (const messageId of pendingSeenMessageIds) {
+            sendSeen(messageId);
+        }
+        pendingSeenMessageIds.clear();
+    }
+
+    function sendSubscriptions() {
+        const conversationId = activeConversationId ?? document.getElementById("conversationId").value.trim();
+        sendFrame(["SUBSCRIBE", "id:ack-" + conversationId, "destination:/user/queue/messages.ack", "", ""].join("\n"));
+        sendFrame(["SUBSCRIBE", "id:msg-" + conversationId, "destination:/user/queue/messages", "", ""].join("\n"));
+        sendFrame(["SUBSCRIBE", "id:delivered-" + conversationId, "destination:/user/queue/messages.delivered", "", ""].join("\n"));
+        sendFrame(["SUBSCRIBE", "id:seen-" + conversationId, "destination:/user/queue/messages.seen", "", ""].join("\n"));
+    }
+
+    function connectSocket(isReconnect = false) {
+        const url = document.getElementById("url").value.trim();
+        const token = document.getElementById("token").value.trim().replace(/^Bearer\s+/i, "");
+        activeConversationId = document.getElementById("conversationId").value.trim();
+
+        if (!isReconnect) {
+            reconnectAllowed = true;
+            resetReconnectState();
+        }
+
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            suppressReconnectOnce = true;
+            socket.close();
+        }
+
+        socket = new WebSocket(url);
+
+        socket.onopen = () => {
+            log("WebSocket opened");
+            sendFrame([
+                "CONNECT",
+                "Authorization:Bearer " + token,
+                "accept-version:1.2",
+                "heart-beat:5000,5000",
+                "",
+                ""
+            ].join("\n"));
+        };
+
+        socket.onmessage = (event) => {
+            const raw = String(event.data);
+            if (raw.trim() === "") {
+                log("RECEIVE HEARTBEAT");
+                return;
+            }
+            log("RECEIVE:\n" + raw.replaceAll(NULL_CHAR, "\\0"));
+
+            const frame = parseStompFrame(raw);
+            if (frame.command === "CONNECTED") {
+                stompConnected = true;
+                reconnectAttempts = 0;
+                startHeartbeat();
+                if (activeConversationId !== null) {
+                    sendSubscriptions();
+                }
+                if (chatOpened) {
+                    sendFrame([
+                        "SEND",
+                        "destination:/app/chat.seenConversation",
+                        "content-type:application/json",
+                        "",
+                        JSON.stringify({
+                            conversationId: Number(activeConversationId)
+                        })
+                    ].join("\n"));
+                }
+            }
+            if (frame.headers.destination === "/user/queue/messages") {
+                try {
+                    const payload = JSON.parse(frame.body || "{}");
+                    if (payload && payload.id) {
+                        sendDelivered(payload.id);
+                        if (chatOpened) {
+                            sendSeen(payload.id);
+                        } else {
+                            pendingSeenMessageIds.add(payload.id);
+                        }
+                    }
+                } catch (error) {
+                    log("Khong parse duoc message de gui delivered");
+                }
+            }
+        };
+
+        socket.onerror = () => log("WebSocket error");
+        socket.onclose = (event) => {
+            stompConnected = false;
+            stopHeartbeat();
+            log(`WebSocket closed code=${event.code} reason=${event.reason || "(empty)"}`);
+            if (suppressReconnectOnce) {
+                suppressReconnectOnce = false;
+                return;
+            }
+            if (reconnectAllowed) {
+                scheduleReconnect();
+            }
+        };
+    }
+
+    function subscribeTopic() {
+        activeConversationId = document.getElementById("conversationId").value.trim();
+        sendSubscriptions();
+    }
+
+    function sendMessage() {
+        const conversationId = Number(document.getElementById("conversationId").value.trim());
+        activeConversationId = String(conversationId);
+        const content = document.getElementById("content").value.trim();
+        const body = JSON.stringify({
+            conversationId,
+            clientMessageId: crypto.randomUUID(),
+            content
+        });
+
+        sendFrame([
+            "SEND",
+            "destination:/app/chat.send",
+            "content-type:application/json",
+            "",
+            body
+        ].join("\n"));
+    }
+
+    function openChat() {
+        chatOpened = true;
+        activeConversationId = document.getElementById("conversationId").value.trim();
+        log("Chat opened");
+        flushSeenQueue();
+        sendFrame([
+            "SEND",
+            "destination:/app/chat.seenConversation",
+            "content-type:application/json",
+            "",
+            JSON.stringify({
+                conversationId: Number(document.getElementById("conversationId").value.trim())
+            })
+        ].join("\n"));
+    }
+
+    function disconnectSocket() {
+        reconnectAllowed = false;
+        resetReconnectState();
+        suppressReconnectOnce = true;
+        stompConnected = false;
+        stopHeartbeat();
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            sendFrame(["DISCONNECT", "", ""].join("\n"));
+        }
+        socket?.close();
+    }
+</script>
+</body>
+</html>
