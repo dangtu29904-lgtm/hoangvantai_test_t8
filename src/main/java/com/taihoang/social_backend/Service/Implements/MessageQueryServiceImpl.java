@@ -1,11 +1,15 @@
 package com.taihoang.social_backend.Service.Implements;
 
+import com.taihoang.social_backend.Entity.MessageReaction;
 import com.taihoang.social_backend.Entity.Messenger;
 import com.taihoang.social_backend.Repository.ConversationMemberRepository;
+import com.taihoang.social_backend.Repository.MessageReactionRepository;
 import com.taihoang.social_backend.Repository.MessengerRepository;
 import com.taihoang.social_backend.Service.MessageQueryService;
 import com.taihoang.social_backend.dto.MessageHistoryResponse;
+import com.taihoang.social_backend.dto.MessageReactionItemResponse;
 import com.taihoang.social_backend.dto.MessageResponse;
+import com.taihoang.social_backend.dto.ReplyMessageResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -14,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -22,7 +28,7 @@ public class MessageQueryServiceImpl implements MessageQueryService {
 
     private final ConversationMemberRepository conversationMemberRepository;
     private final MessengerRepository messengerRepository;
-
+    private final MessageReactionRepository messageReactionRepository;
     /**
      * Luong xu ly chinh cua API lay lich su tin nhan.
      */
@@ -39,9 +45,11 @@ public class MessageQueryServiceImpl implements MessageQueryService {
 
         List<Messenger> queriedMessages = findMessagePage(
                 conversationId,
+                currentUserId,
                 beforeSequence,
                 requestedLimit
         );
+
 
         boolean hasMore = queriedMessages.size() > requestedLimit;
         List<Messenger> pageMessages = takeCurrentPage(
@@ -50,8 +58,22 @@ public class MessageQueryServiceImpl implements MessageQueryService {
                 hasMore
         );
         Long nextBeforeSequence = buildNextBeforeSequence(pageMessages, hasMore);
-        List<MessageResponse> items = toChronologicalResponses(pageMessages);
+        // =======================================
+        // LOAD REACTION CHO TOAN BO PAGE
+        // =======================================
 
+        Map<Long, List<MessageReaction>>
+                reactionsByMessageId =
+                loadReactions(pageMessages);
+        // =======================================
+        // MAP RESPONSE
+        // =======================================
+
+        List<MessageResponse> items =
+                toChronologicalResponses(
+                        pageMessages,
+                        reactionsByMessageId
+                );
         return new MessageHistoryResponse(items, nextBeforeSequence, hasMore);
     }
 
@@ -94,11 +116,13 @@ public class MessageQueryServiceImpl implements MessageQueryService {
      */
     private List<Messenger> findMessagePage(
             Long conversationId,
+            Long currentUserId ,
             Long beforeSequence,
             int limit
     ) {
         return messengerRepository.findMessageHistory(
                 conversationId,
+                currentUserId,
                 beforeSequence,
                 PageRequest.of(0, limit + 1)
         );
@@ -131,23 +155,143 @@ public class MessageQueryServiceImpl implements MessageQueryService {
     /**
      * Query lay tu moi den cu, sau do dao lai de frontend nhan duoc thu tu cu den moi.
      */
-    private List<MessageResponse> toChronologicalResponses(List<Messenger> pageMessages) {
+    private List<MessageResponse>
+    toChronologicalResponses(
+
+            List<Messenger> pageMessages,
+
+            Map<Long, List<MessageReaction>>
+                    reactionsByMessageId
+    ) {
+
         Collections.reverse(pageMessages);
-        return pageMessages.stream()
-                .map(this::toMessageResponse)
+
+
+        return pageMessages
+                .stream()
+                .map(message ->
+                        toMessageResponse(
+                                message,
+                                reactionsByMessageId
+                        )
+                )
                 .toList();
     }
+    private MessageResponse toMessageResponse(
+            Messenger messenger,
+            Map<Long, List<MessageReaction>>
+                    reactionsByMessageId
+    ) {
+        ReplyMessageResponse replyResponse = null;
 
-    private MessageResponse toMessageResponse(Messenger messenger) {
+        Messenger replyTo =
+                messenger.getReplyToMessage();
+
+        if (replyTo != null) {
+            boolean recalled = replyTo.getRecalledAt()!=null ;
+            String replyVisibleContent =
+                    recalled
+                            ? null
+                            : replyTo.getContent();
+            replyResponse =
+                    new ReplyMessageResponse(
+                            replyTo.getId(),
+                            replyTo
+                                    .getUser()
+                                    .getId(),
+                            replyTo
+                                    .getUser()
+                                    .getUserName(),
+                            replyVisibleContent,
+                            recalled
+                    );
+        }
+        String visibleContent =
+                messenger.getRecalledAt() != null
+                        ? null
+                        : messenger.getContent();
+        List<MessageReaction> messageReactions =
+                reactionsByMessageId
+                        .getOrDefault(
+                                messenger.getId(),
+                                List.of()
+                        );
+        List<MessageReactionItemResponse>
+                reactionResponses;
+        if (messenger.getRecalledAt() != null) {
+            reactionResponses =
+                    List.of();
+        } else {
+            reactionResponses =
+                    messageReactions
+                            .stream()
+                            .map(reaction ->
+                                    new MessageReactionItemResponse(
+                                            reaction
+                                                    .getUser()
+                                                    .getId(),
+                                            reaction
+                                                    .getUser()
+                                                    .getUserName(),
+                                            reaction.getType()
+                                    )
+                            )
+                            .toList();
+        }
         return new MessageResponse(
                 messenger.getId(),
-                messenger.getConversation().getId(),
+                messenger
+                        .getConversation()
+                        .getId(),
                 messenger.getClientMessageId(),
                 messenger.getSequenceNumber(),
-                messenger.getUser().getId(),
-                messenger.getUser().getUserName(),
-                messenger.getContent(),
-                messenger.getSentAt()
+                messenger
+                        .getUser()
+                        .getId(),
+                messenger
+                        .getUser()
+                        .getUserName(),
+                visibleContent ,
+                messenger.getSentAt(),
+                replyResponse,
+                messenger.getEditedAt(),
+                messenger.getRecalledAt(),
+                reactionResponses
         );
+    }
+    private Map<Long, List<MessageReaction>>
+    loadReactions(
+            List<Messenger> messages
+    ) {
+
+        if (messages.isEmpty()) {
+            return Map.of();
+        }
+
+
+        List<Long> messageIds =
+                messages
+                        .stream()
+                        .map(Messenger::getId)
+                        .toList();
+
+
+        List<MessageReaction> reactions =
+                messageReactionRepository
+                        .findByMessageIds(
+                                messageIds
+                        );
+
+
+        return reactions
+                .stream()
+                .collect(
+                        Collectors.groupingBy(
+                                reaction ->
+                                        reaction
+                                                .getMessenger()
+                                                .getId()
+                        )
+                );
     }
 }

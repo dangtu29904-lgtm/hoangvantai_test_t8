@@ -33,7 +33,13 @@ public class Messenger {
     @ManyToOne
     @JoinColumn(name="conversation_id")
     private Conversations conversation ;
-
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reply_to_message_id")
+    private Messenger replyToMessage;
     @OneToMany(mappedBy = "messenger")
     private List<MessengerStatus> messengerStatuses ;
+    @Column(name = "edited_at", columnDefinition = "datetime(6)")
+    private LocalDateTime editedAt;
+    @Column(name = "recalled_at", columnDefinition = "datetime(6)")
+    private LocalDateTime recalledAt;
 }

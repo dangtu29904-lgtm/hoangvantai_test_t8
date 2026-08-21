@@ -86,4 +86,14 @@ public interface ConversationMemberRepository extends JpaRepository<Conversation
 
         Long getLastMessageId();
     }
+    @Query("""
+       SELECT cm
+       FROM Conversation_Member cm
+       JOIN FETCH cm.user
+       WHERE cm.conversation.id = :conversationId
+       """)
+    List<Conversation_Member> findAllMembersByConversationId(
+            @Param("conversationId")
+            Long conversationId
+    );
 }

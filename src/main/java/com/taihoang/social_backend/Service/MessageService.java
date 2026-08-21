@@ -1,31 +1,14 @@
 package com.taihoang.social_backend.Service;
 
-import com.taihoang.social_backend.Entity.Conversations;
-import com.taihoang.social_backend.Entity.Messenger;
-import com.taihoang.social_backend.Entity.MessengerStatus;
-import com.taihoang.social_backend.Entity.User;
-import com.taihoang.social_backend.Repository.ConversationMemberRepository;
-import com.taihoang.social_backend.Repository.ConversationRepository;
-import com.taihoang.social_backend.Repository.MessengerRepository;
-import com.taihoang.social_backend.Repository.MessengerStatusRepository;
-import com.taihoang.social_backend.Repository.UserRepository;
-import com.taihoang.social_backend.dto.DeliveredRequest;
-import com.taihoang.social_backend.dto.DeliveredResponse;
-import com.taihoang.social_backend.dto.DeliveredResult;
-import com.taihoang.social_backend.dto.MessageRequest;
-import com.taihoang.social_backend.dto.MessageResponse;
-import com.taihoang.social_backend.dto.SeenRequest;
-import com.taihoang.social_backend.dto.SeenConversationRequest;
-import com.taihoang.social_backend.dto.SeenConversationResponse;
-import com.taihoang.social_backend.dto.SeenConversationResult;
-import com.taihoang.social_backend.dto.SeenResponse;
-import com.taihoang.social_backend.dto.SeenResult;
-import com.taihoang.social_backend.dto.SendMessageResult;
+import com.taihoang.social_backend.Entity.*;
+import com.taihoang.social_backend.Repository.*;
+import com.taihoang.social_backend.dto.*;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class MessageService {
@@ -34,17 +17,20 @@ public class MessageService {
     private final ConversationMemberRepository conversationMemberRepository;
     private final MessengerRepository messengerRepository;
     private final MessengerStatusRepository messengerStatusRepository;
-
+    private final MessageUserStateRepository messageUserStateRepository ;
+    private final MessageReactionRepository messageReactionRepository ;
     public MessageService(UserRepository userRepository,
                           ConversationRepository conversationRepository,
                           ConversationMemberRepository conversationMemberRepository,
                           MessengerRepository messengerRepository,
-                          MessengerStatusRepository messengerStatusRepository) {
+                          MessengerStatusRepository messengerStatusRepository, MessageUserStateRepository messageUserStateRepository, MessageReactionRepository messageReactionRepository) {
         this.userRepository = userRepository;
         this.conversationRepository = conversationRepository;
         this.conversationMemberRepository = conversationMemberRepository;
         this.messengerRepository = messengerRepository;
         this.messengerStatusRepository = messengerStatusRepository;
+        this.messageUserStateRepository = messageUserStateRepository;
+        this.messageReactionRepository = messageReactionRepository;
     }
 
     @Transactional
@@ -176,9 +162,99 @@ public class MessageService {
 
         return new SeenConversationResult(senderDestination, response);
     }
+    @Transactional
+    public EditMessageResult handleEditMessage(
+            Long currentUserId,
+            EditMessageRequest request
+    ) {
+
+        User currentUser =
+                userRepository.findById(currentUserId)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay user"
+                                )
+                        );
+
+
+        Messenger messenger =
+                messengerRepository.findByIdForUpdate(request.messageId())
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay tin nhan"
+                                )
+                        );
+
+
+        // ============================
+        // CHI NGUOI GUI MOI DUOC SUA
+        // ============================
+
+        if (!messenger
+                .getUser()
+                .getId()
+                .equals(currentUser.getId())) {
+
+            throw new IllegalArgumentException(
+                    "Ban khong co quyen sua tin nhan nay"
+            );
+        }
+
+
+        messenger.setContent(
+                request.content().trim()
+        );
+
+        messenger.setEditedAt(
+                LocalDateTime.now()
+        );
+
+
+        Messenger savedMessage =
+                messengerRepository.save(messenger);
+
+
+        EditMessageResponse response =
+                new EditMessageResponse(
+
+                        savedMessage.getId(),
+
+                        savedMessage
+                                .getConversation()
+                                .getId(),
+
+                        savedMessage.getContent(),
+
+                        savedMessage.getEditedAt()
+                );
+
+        List<String> destinations =
+                conversationMemberRepository
+                        .findAllMembersByConversationId(
+                                savedMessage
+                                        .getConversation()
+                                        .getId()
+                        )
+                        .stream()
+                        .map(member ->
+                                member.getUser().getEmail()
+                        )
+                        .toList();
+
+
+        return new EditMessageResult(
+                response,
+                destinations
+        );
+    }
 
     private SendMessageResult createMessage(User sender, Conversations conversation, MessageRequest request) {
         Long nextSequenceNumber = messengerRepository.findMaxSequenceNumberByConversationId(conversation.getId()) + 1;
+        Messenger replyToMessage =
+                resolveReplyMessage(
+                        conversation,
+                        request.replyToMessageId()
+                );
 
         Messenger messenger = new Messenger();
         messenger.setConversation(conversation);
@@ -188,6 +264,7 @@ public class MessageService {
         messenger.setSequenceNumber(nextSequenceNumber);
         messenger.setSentAt(LocalDateTime.now());
 
+        messenger.setReplyToMessage(replyToMessage);
         Messenger savedMessenger = messengerRepository.save(messenger);
         List<String> recipientDestinations = createStatusesForRecipients(savedMessenger, sender);
 
@@ -213,17 +290,486 @@ public class MessageService {
                 .map(status -> status.getUser().getEmail())
                 .toList();
     }
+    private Messenger resolveReplyMessage(
+            Conversations conversation,
+            Long replyToMessageId
+    ) {
 
-    private MessageResponse toResponse(Messenger messenger) {
+        if (replyToMessageId == null) {
+            return null;
+        }
+
+        Messenger replyToMessage =
+                messengerRepository
+                        .findById(replyToMessageId)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Tin nhan duoc reply khong ton tai"
+                                )
+                        );
+
+        if (!replyToMessage
+                .getConversation()
+                .getId()
+                .equals(conversation.getId())) {
+
+            throw new IllegalArgumentException(
+                    "Khong the reply tin nhan cua conversation khac"
+            );
+        }
+
+        return replyToMessage;
+    }
+
+    private MessageResponse toResponse(
+            Messenger messenger
+    ) {
+        ReplyMessageResponse replyResponse = null;
+        Messenger replyToMessage =
+                messenger.getReplyToMessage();
+        boolean recalled =
+                replyToMessage.getRecalledAt() != null;
+
+        String replyContent =
+                recalled
+                        ? null
+                        : replyToMessage.getContent();
+        if (replyToMessage != null) {
+            replyResponse =
+                    new ReplyMessageResponse(
+                            replyToMessage.getId(),
+                            replyToMessage
+                                    .getUser()
+                                    .getId(),
+                            replyToMessage
+                                    .getUser()
+                                    .getUserName(),
+                            replyContent,
+                            recalled
+                    );
+        }
+        String visibleContent =
+                messenger.getRecalledAt() != null
+                        ? null
+                        : messenger.getContent();
         return new MessageResponse(
                 messenger.getId(),
-                messenger.getConversation().getId(),
+                messenger
+                        .getConversation()
+                        .getId(),
                 messenger.getClientMessageId(),
+
                 messenger.getSequenceNumber(),
-                messenger.getUser().getId(),
-                messenger.getUser().getUserName(),
-                messenger.getContent(),
-                messenger.getSentAt()
+
+                messenger
+                        .getUser()
+                        .getId(),
+                messenger
+                        .getUser()
+                        .getUserName(),
+                visibleContent,
+                messenger.getSentAt(),
+                replyResponse,
+                messenger.getEditedAt(),
+                messenger.getRecalledAt(),
+                List.of()
+        );
+    }
+    @Transactional
+    public RecallMessageResult handleRecallMessage(
+            Long currentUserId,
+            RecallMessageRequest request
+    ) {
+        Messenger messenger =
+                messengerRepository
+                        .findById(request.messageId())
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay tin nhan"
+                                )
+                        );
+        // =================================
+        // CHI SENDER MOI DUOC THU HOI
+        // =================================
+        if (!messenger
+                .getUser()
+                .getId()
+                .equals(currentUserId)) {
+
+            throw new IllegalArgumentException(
+                    "Ban khong co quyen thu hoi tin nhan nay"
+            );
+        }
+        // =================================
+        // IDEMPOTENT
+        // =================================
+        if (messenger.getRecalledAt() == null) {
+            messenger.setRecalledAt(
+                    LocalDateTime.now()
+            );
+            messengerRepository.save(messenger);
+        }
+        RecallMessageResponse response =
+                new RecallMessageResponse(
+                        messenger.getId(),
+                        messenger
+                                .getConversation()
+                                .getId(),
+                        messenger.getRecalledAt()
+                );
+        List<String> destinations =
+                conversationMemberRepository
+                        .findMembersByConversationId(
+                                messenger
+                                        .getConversation()
+                                        .getId()
+                        )
+                        .stream()
+                        .map(member ->
+                                member
+                                        .getUser()
+                                        .getEmail()
+                        )
+                        .toList();
+        return new RecallMessageResult(
+                response,
+                destinations
+        );
+    }
+    @Transactional
+    public DeleteMessageForMeResult
+    handleDeleteMessageForMe(
+            Long currentUserId,
+            DeleteMessageForMeRequest request
+    ) {
+
+        User currentUser =
+                userRepository
+                        .findById(currentUserId)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay user"
+                                )
+                        );
+
+
+        Messenger messenger =
+                messengerRepository
+                        .findById(request.messageId())
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay tin nhan"
+                                )
+                        );
+
+
+        Long conversationId =
+                messenger
+                        .getConversation()
+                        .getId();
+
+
+        // ====================================
+        // USER PHAI THUOC CONVERSATION
+        // ====================================
+
+        boolean isMember =
+                conversationMemberRepository
+                        .existsByConversationIdAndUserId(
+                                conversationId,
+                                currentUserId
+                        );
+
+
+        if (!isMember) {
+
+            throw new IllegalArgumentException(
+                    "User khong thuoc conversation nay"
+            );
+        }
+
+
+        // ====================================
+        // IDEMPOTENT
+        // ====================================
+
+        MessageUserState state =
+                messageUserStateRepository
+                        .findByMessengerIdAndUserId(
+                                messenger.getId(),
+                                currentUserId
+                        )
+                        .orElseGet(() -> {
+
+                            MessageUserState newState =
+                                    new MessageUserState();
+
+                            newState.setMessenger(messenger);
+                            newState.setUser(currentUser);
+
+                            return newState;
+                        });
+
+
+        if (state.getDeletedAt() == null) {
+
+            state.setDeletedAt(
+                    LocalDateTime.now()
+            );
+
+            messageUserStateRepository.save(state);
+        }
+
+
+        return new DeleteMessageForMeResult(
+
+                currentUser.getEmail(),
+
+                new DeleteMessageForMeResponse(
+
+                        messenger.getId(),
+
+                        conversationId,
+
+                        state.getDeletedAt()
+                )
+        );
+    }
+    @Transactional
+    public MessageReactionResult handleMessageReaction(
+            Long currentUserId,
+            MessageReactionRequest request
+    ) {
+
+        User currentUser =
+                userRepository
+                        .findById(currentUserId)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay user"
+                                )
+                        );
+
+
+        Messenger messenger =
+                messengerRepository
+                        .findById(request.messageId())
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay tin nhan"
+                                )
+                        );
+
+
+        Long conversationId =
+                messenger
+                        .getConversation()
+                        .getId();
+
+
+        // ======================================
+        // CHECK MEMBERSHIP
+        // ======================================
+
+        boolean isMember =
+                conversationMemberRepository
+                        .existsByConversationIdAndUserId(
+                                conversationId,
+                                currentUserId
+                        );
+
+
+        if (!isMember) {
+
+            throw new IllegalArgumentException(
+                    "User khong thuoc conversation nay"
+            );
+        }
+
+
+        // ======================================
+        // MESSAGE DA RECALL THI KHONG REACT
+        // ======================================
+
+        if (messenger.getRecalledAt() != null) {
+
+            throw new IllegalArgumentException(
+                    "Khong the reaction tin nhan da thu hoi"
+            );
+        }
+
+
+        // ======================================
+        // MESSAGE DA DELETE FOR ME
+        // ======================================
+
+        boolean deletedForMe =
+                messageUserStateRepository
+                        .findByMessengerIdAndUserId(
+                                messenger.getId(),
+                                currentUserId
+                        )
+                        .map(state ->
+                                state.getDeletedAt() != null
+                        )
+                        .orElse(false);
+
+
+        if (deletedForMe) {
+
+            throw new IllegalArgumentException(
+                    "Tin nhan da bi xoa o phia ban"
+            );
+        }
+
+
+        return applyReaction(
+                currentUser,
+                messenger,
+                request.type()
+        );
+    }
+    private MessageReactionResult applyReaction(
+            User currentUser,
+            Messenger messenger,
+            ReactionType requestedType
+    ) {
+
+        Optional<MessageReaction> existingReaction =
+                messageReactionRepository
+                        .findByMessengerIdAndUserId(
+                                messenger.getId(),
+                                currentUser.getId()
+                        );
+
+
+        MessageReactionAction action;
+
+
+        // =====================================
+        // CHUA CO REACTION
+        // =====================================
+
+        if (existingReaction.isEmpty()) {
+
+            MessageReaction reaction =
+                    new MessageReaction();
+
+            reaction.setMessenger(messenger);
+            reaction.setUser(currentUser);
+            reaction.setType(requestedType);
+
+            messageReactionRepository.save(
+                    reaction
+            );
+
+            action = MessageReactionAction.ADD;
+        }
+
+
+        // =====================================
+        // DA CO REACTION
+        // =====================================
+
+        else {
+
+            MessageReaction reaction =
+                    existingReaction.get();
+
+
+            // =============================
+            // BAM LAI CUNG REACTION
+            // → REMOVE
+            // =============================
+
+            if (reaction.getType() == requestedType) {
+
+                messageReactionRepository.delete(
+                        reaction
+                );
+
+                action =
+                        MessageReactionAction.REMOVE;
+            }
+
+
+            // =============================
+            // DOI REACTION
+            // LOVE → HAHA
+            // =============================
+
+            else {
+
+                reaction.setType(requestedType);
+
+                messageReactionRepository.save(
+                        reaction
+                );
+
+                action =
+                        MessageReactionAction.UPDATE;
+            }
+        }
+
+
+        return buildReactionResult(
+                currentUser,
+                messenger,
+                requestedType,
+                action
+        );
+    }
+    private MessageReactionResult buildReactionResult(
+
+            User currentUser,
+
+            Messenger messenger,
+
+            ReactionType type,
+
+            MessageReactionAction action
+    ) {
+
+        Long conversationId =
+                messenger
+                        .getConversation()
+                        .getId();
+
+
+        MessageReactionResponse response =
+                new MessageReactionResponse(
+
+                        messenger.getId(),
+
+                        conversationId,
+
+                        currentUser.getId(),
+
+                        currentUser.getUserName(),
+
+                        type,
+
+                        action
+                );
+
+
+        List<String> destinations =
+                conversationMemberRepository
+                        .findMembersByConversationId(
+                                conversationId
+                        )
+                        .stream()
+                        .map(member ->
+                                member
+                                        .getUser()
+                                        .getEmail()
+                        )
+                        .toList();
+
+
+        return new MessageReactionResult(
+                response,
+                destinations
         );
     }
 }

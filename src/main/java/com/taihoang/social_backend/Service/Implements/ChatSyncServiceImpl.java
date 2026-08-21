@@ -1,11 +1,15 @@
 package com.taihoang.social_backend.Service.Implements;
 
+import com.taihoang.social_backend.Entity.MessageReaction;
 import com.taihoang.social_backend.Entity.Messenger;
 import com.taihoang.social_backend.Entity.MessengerStatus;
+import com.taihoang.social_backend.Repository.MessageReactionRepository;
 import com.taihoang.social_backend.Repository.MessengerStatusRepository;
 import com.taihoang.social_backend.Service.ChatSyncService;
 import com.taihoang.social_backend.dto.ChatSyncResponse;
+import com.taihoang.social_backend.dto.MessageReactionItemResponse;
 import com.taihoang.social_backend.dto.MessageResponse;
+import com.taihoang.social_backend.dto.ReplyMessageResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -13,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -20,6 +26,7 @@ public class ChatSyncServiceImpl implements ChatSyncService {
     private static final int MAX_LIMIT = 100;
 
     private final MessengerStatusRepository messengerStatusRepository;
+    private final MessageReactionRepository messageReactionRepository ;
 
     /**
      * Lay nhung tin nhan ma thiet bi cua user chua xac nhan delivered.
@@ -45,10 +52,43 @@ public class ChatSyncServiceImpl implements ChatSyncService {
                 requestedLimit,
                 hasMore
         );
-
-        List<MessageResponse> items = pageStatuses.stream()
-                .map(MessengerStatus::getMessenger)
-                .map(this::toMessageResponse)
+        List<Messenger> messages =
+                pageStatuses
+                        .stream()
+                        .map(MessengerStatus::getMessenger)
+                        .toList();
+        List<Long> messageIds =
+                messages
+                        .stream()
+                        .map(Messenger::getId)
+                        .toList();
+        List<MessageReaction> reactions =
+                messageIds.isEmpty()
+                        ? List.of()
+                        : messageReactionRepository
+                        .findByMessageIds(
+                                messageIds
+                        );
+        Map<Long, List<MessageReaction>>
+                reactionsByMessageId =
+                reactions
+                        .stream()
+                        .collect(
+                                Collectors.groupingBy(
+                                        reaction ->
+                                                reaction
+                                                        .getMessenger()
+                                                        .getId()
+                                )
+                        );
+        List<MessageResponse> items =  messages
+                .stream()
+                .map(messenger ->
+                        toMessageResponse(
+                                messenger,
+                                reactionsByMessageId
+                        )
+                )
                 .toList();
 
         Long nextAfterMessageId = buildNextAfterMessageId(pageStatuses, hasMore);
@@ -108,16 +148,86 @@ public class ChatSyncServiceImpl implements ChatSyncService {
         return lastStatus.getMessenger().getId();
     }
 
-    private MessageResponse toMessageResponse(Messenger messenger) {
+    private MessageResponse toMessageResponse(
+            Messenger messenger,
+            Map<Long, List<MessageReaction>>
+                    reactionsByMessageId
+    ) {
+        ReplyMessageResponse replyResponse = null;
+
+        Messenger replyTo =
+                messenger.getReplyToMessage();
+
+        if (replyTo != null) {
+            boolean recalled = replyTo.getRecalledAt()!=null ;
+            String replyVisibleContent =
+                    recalled
+                            ? null
+                            : replyTo.getContent();
+            replyResponse =
+                    new ReplyMessageResponse(
+                            replyTo.getId(),
+                            replyTo
+                                    .getUser()
+                                    .getId(),
+                            replyTo
+                                    .getUser()
+                                    .getUserName(),
+                            replyVisibleContent,
+                            recalled
+                    );
+        }
+        String visibleContent =
+                messenger.getRecalledAt() != null
+                        ? null
+                        : messenger.getContent();
+        List<MessageReaction> messageReactions =
+                reactionsByMessageId
+                        .getOrDefault(
+                                messenger.getId(),
+                                List.of()
+                        );
+        List<MessageReactionItemResponse>
+                reactionResponses;
+        if (messenger.getRecalledAt() != null) {
+            reactionResponses =
+                    List.of();
+        } else {
+            reactionResponses =
+                    messageReactions
+                            .stream()
+                            .map(reaction ->
+                                    new MessageReactionItemResponse(
+                                            reaction
+                                                    .getUser()
+                                                    .getId(),
+                                            reaction
+                                                    .getUser()
+                                                    .getUserName(),
+                                            reaction.getType()
+                                    )
+                            )
+                            .toList();
+        }
         return new MessageResponse(
                 messenger.getId(),
-                messenger.getConversation().getId(),
+                messenger
+                        .getConversation()
+                        .getId(),
                 messenger.getClientMessageId(),
                 messenger.getSequenceNumber(),
-                messenger.getUser().getId(),
-                messenger.getUser().getUserName(),
-                messenger.getContent(),
-                messenger.getSentAt()
+                messenger
+                        .getUser()
+                        .getId(),
+                messenger
+                        .getUser()
+                        .getUserName(),
+                visibleContent ,
+                messenger.getSentAt(),
+                replyResponse,
+                messenger.getEditedAt(),
+                messenger.getRecalledAt(),
+                reactionResponses
         );
     }
 }

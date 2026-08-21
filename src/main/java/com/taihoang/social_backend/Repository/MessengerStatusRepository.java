@@ -27,7 +27,16 @@ public interface MessengerStatusRepository extends JpaRepository<MessengerStatus
             from MessengerStatus ms
             where ms.user.id = :userId
               and ms.seenAt is null
+              and ms.messenger.recalledAt is null
               and ms.messenger.conversation.id in :conversationIds
+              and not exists (             
+                  select mus.id              
+                  from MessageUserState mus              
+                  where mus.messenger.id =
+                        ms.messenger.id             
+                    and mus.user.id = :userId           
+                    and mus.deletedAt is not null
+              )
             group by ms.messenger.conversation.id
             """)
     List<ConversationUnreadCountView> countUnreadByConversationIds(
@@ -42,6 +51,13 @@ public interface MessengerStatusRepository extends JpaRepository<MessengerStatus
         where ms.user.id = :userId
           and ms.deliveredAt is null
           and (:afterMessageId is null or m.id > :afterMessageId)
+          and not exists (
+                      select mus.id         
+                      from MessageUserState mus          
+                      where mus.messenger.id = m.id         
+                        and mus.user.id = :userId        
+                        and mus.deletedAt is not null
+                )
         order by m.id asc
         """)
     List<MessengerStatus> findUndeliveredMessagesForSync(

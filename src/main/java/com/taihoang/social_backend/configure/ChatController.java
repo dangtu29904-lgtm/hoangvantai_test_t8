@@ -1,14 +1,7 @@
 package com.taihoang.social_backend.configure;
 
 import com.taihoang.social_backend.Service.MessageService;
-import com.taihoang.social_backend.dto.DeliveredRequest;
-import com.taihoang.social_backend.dto.DeliveredResult;
-import com.taihoang.social_backend.dto.MessageRequest;
-import com.taihoang.social_backend.dto.SeenConversationRequest;
-import com.taihoang.social_backend.dto.SeenConversationResult;
-import com.taihoang.social_backend.dto.SeenRequest;
-import com.taihoang.social_backend.dto.SeenResult;
-import com.taihoang.social_backend.dto.SendMessageResult;
+import com.taihoang.social_backend.dto.*;
 import com.taihoang.social_backend.security.AuthenticatedUserDetails;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -83,12 +76,105 @@ public class ChatController {
             );
         }
     }
-
+    @MessageMapping("/chat.edit")
+    public void editMessage(
+            @Valid
+            @Payload
+            EditMessageRequest request,
+            Principal principal
+    ) {
+        Long currentUserId =
+                extractUserId(principal);
+        EditMessageResult result =
+                messageService.handleEditMessage(
+                        currentUserId,
+                        request
+                );
+        result.destinations()
+                .forEach(destination ->
+                        messagingTemplate
+                                .convertAndSendToUser(
+                                        destination,
+                                        "/queue/messages.updated",
+                                        result.response()
+                                )
+                );
+    }
+    @MessageMapping("/chat.recall")
+    public void recallMessage(
+            @Valid
+            @Payload
+            RecallMessageRequest request,
+            Principal principal
+    ) {
+        Long currentUserId =
+                extractUserId(principal);
+        RecallMessageResult result =
+                messageService.handleRecallMessage(
+                        currentUserId,
+                        request
+                );
+        result.destinations()
+                .forEach(destination ->
+                        messagingTemplate
+                                .convertAndSendToUser(
+                                        destination,
+                                        "/queue/messages.recalled",
+                                        result.response()
+                                )
+                );
+    }
+    @MessageMapping("/chat.deleteForMe")
+    public void deleteMessageForMe(
+            @Valid
+            @Payload
+            DeleteMessageForMeRequest request,
+            Principal principal
+    ) {
+        Long currentUserId =
+                extractUserId(principal);
+        DeleteMessageForMeResult response =
+                messageService
+                        .handleDeleteMessageForMe(
+                                currentUserId,
+                                request
+                        );
+        messagingTemplate.convertAndSendToUser(
+                response.destination(),
+                "/queue/messages.deleted-for-me",
+                response.response()
+        );
+    }
     private Long extractUserId(Principal principal) {
         if (principal instanceof Authentication authentication
                 && authentication.getPrincipal() instanceof AuthenticatedUserDetails userDetails) {
             return userDetails.getId();
         }
         throw new IllegalArgumentException("Khong xac dinh duoc user gui tin nhan");
+    }
+    @MessageMapping("/chat.react")
+    public void reactMessage(
+            @Valid
+            @Payload
+            MessageReactionRequest request,
+            Principal principal
+    ) {
+        Long currentUserId =
+                extractUserId(principal);
+        MessageReactionResult result =
+                messageService
+                        .handleMessageReaction(
+                                currentUserId,
+                                request
+                        );
+        result.destinations()
+                .forEach(destination ->
+                        messagingTemplate
+                                .convertAndSendToUser(
+                                        destination,
+                                        "/queue/messages.reaction",
+                                        result.response()
+                                )
+                );
     }
 }
