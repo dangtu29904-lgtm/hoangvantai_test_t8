@@ -24,7 +24,9 @@ public record MessageResponse(
         ReplyMessageResponse replyTo,
         LocalDateTime editedAt ,
         LocalDateTime recalledAt,
-        List<MessageReactionItemResponse> reactions
+        List<MessageReactionItemResponse> reactions,
+        List<MessageAttachmentResponse> attachments
+
 
 ) {
 }

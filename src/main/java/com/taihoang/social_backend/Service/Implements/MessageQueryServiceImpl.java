@@ -1,15 +1,15 @@
 package com.taihoang.social_backend.Service.Implements;
 
+import com.taihoang.social_backend.Entity.ChatUpload;
+import com.taihoang.social_backend.Entity.MessageAttachment;
 import com.taihoang.social_backend.Entity.MessageReaction;
 import com.taihoang.social_backend.Entity.Messenger;
 import com.taihoang.social_backend.Repository.ConversationMemberRepository;
+import com.taihoang.social_backend.Repository.MessageAttachmentRepository;
 import com.taihoang.social_backend.Repository.MessageReactionRepository;
 import com.taihoang.social_backend.Repository.MessengerRepository;
 import com.taihoang.social_backend.Service.MessageQueryService;
-import com.taihoang.social_backend.dto.MessageHistoryResponse;
-import com.taihoang.social_backend.dto.MessageReactionItemResponse;
-import com.taihoang.social_backend.dto.MessageResponse;
-import com.taihoang.social_backend.dto.ReplyMessageResponse;
+import com.taihoang.social_backend.dto.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -29,6 +29,7 @@ public class MessageQueryServiceImpl implements MessageQueryService {
     private final ConversationMemberRepository conversationMemberRepository;
     private final MessengerRepository messengerRepository;
     private final MessageReactionRepository messageReactionRepository;
+    private final MessageAttachmentRepository messageAttachmentRepository;
     /**
      * Luong xu ly chinh cua API lay lich su tin nhan.
      */
@@ -59,12 +60,15 @@ public class MessageQueryServiceImpl implements MessageQueryService {
         );
         Long nextBeforeSequence = buildNextBeforeSequence(pageMessages, hasMore);
         // =======================================
-        // LOAD REACTION CHO TOAN BO PAGE
+        // LOAD REACTION CHO TOAN BO PAGE and file
         // =======================================
 
         Map<Long, List<MessageReaction>>
                 reactionsByMessageId =
                 loadReactions(pageMessages);
+        Map<Long, List<MessageAttachment>>
+                attachmentsByMessageId =
+                loadAttachments(pageMessages);
         // =======================================
         // MAP RESPONSE
         // =======================================
@@ -72,7 +76,8 @@ public class MessageQueryServiceImpl implements MessageQueryService {
         List<MessageResponse> items =
                 toChronologicalResponses(
                         pageMessages,
-                        reactionsByMessageId
+                        reactionsByMessageId,
+                        attachmentsByMessageId
                 );
         return new MessageHistoryResponse(items, nextBeforeSequence, hasMore);
     }
@@ -155,24 +160,30 @@ public class MessageQueryServiceImpl implements MessageQueryService {
     /**
      * Query lay tu moi den cu, sau do dao lai de frontend nhan duoc thu tu cu den moi.
      */
-    private List<MessageResponse>
-    toChronologicalResponses(
-
+    private List<MessageResponse> toChronologicalResponses(
             List<Messenger> pageMessages,
-
             Map<Long, List<MessageReaction>>
-                    reactionsByMessageId
+                    reactionsByMessageId,
+            Map<Long, List<MessageAttachment>>
+                    attachmentsByMessageId
     ) {
-
-        Collections.reverse(pageMessages);
-
-
-        return pageMessages
+        List<Messenger> chronologicalMessages =
+                new ArrayList<>(pageMessages);
+        // Repository lấy DESC:
+        // 105, 104, 103, 102...
+        //
+        // Frontend cần:
+        // 102, 103, 104, 105...
+        Collections.reverse(
+                chronologicalMessages
+        );
+        return chronologicalMessages
                 .stream()
-                .map(message ->
+                .map(messenger ->
                         toMessageResponse(
-                                message,
-                                reactionsByMessageId
+                                messenger,
+                                reactionsByMessageId,
+                                attachmentsByMessageId
                         )
                 )
                 .toList();
@@ -180,10 +191,45 @@ public class MessageQueryServiceImpl implements MessageQueryService {
     private MessageResponse toMessageResponse(
             Messenger messenger,
             Map<Long, List<MessageReaction>>
-                    reactionsByMessageId
+                    reactionsByMessageId ,
+            Map<Long, List<MessageAttachment>>
+                    attachmentsByMessageId
     ) {
+        List<MessageAttachment> messageAttachments =
+                attachmentsByMessageId
+                        .getOrDefault(
+                                messenger.getId(),
+                                List.of()
+                        );
+        List<MessageAttachmentResponse> attachmentResponses;
+        if (messenger.getRecalledAt() != null) {
+            attachmentResponses =
+                    List.of();
+        } else {
+            attachmentResponses =
+                    messageAttachments
+                            .stream()
+                            .map(attachment -> {
+                                ChatUpload upload =
+                                        attachment
+                                                .getChatUpload();
+                                return new MessageAttachmentResponse(
+                                        attachment.getId(),
+                                        upload
+                                                .getAttachmentType(),
+                                        upload
+                                                .getSecureUrl(),
+                                        upload
+                                                .getOriginalFileName(),
+                                        upload
+                                                .getContentType(),
+                                        upload
+                                                .getFileSize()
+                                );
+                            })
+                            .toList();
+        }
         ReplyMessageResponse replyResponse = null;
-
         Messenger replyTo =
                 messenger.getReplyToMessage();
 
@@ -256,7 +302,8 @@ public class MessageQueryServiceImpl implements MessageQueryService {
                 replyResponse,
                 messenger.getEditedAt(),
                 messenger.getRecalledAt(),
-                reactionResponses
+                reactionResponses,
+                attachmentResponses
         );
     }
     private Map<Long, List<MessageReaction>>
@@ -289,6 +336,41 @@ public class MessageQueryServiceImpl implements MessageQueryService {
                         Collectors.groupingBy(
                                 reaction ->
                                         reaction
+                                                .getMessenger()
+                                                .getId()
+                        )
+                );
+    }
+    private Map<Long, List<MessageAttachment>>
+    loadAttachments(
+            List<Messenger> messages
+    ) {
+
+        if (messages.isEmpty()) {
+            return Map.of();
+        }
+
+
+        List<Long> messageIds =
+                messages
+                        .stream()
+                        .map(Messenger::getId)
+                        .toList();
+
+
+        List<MessageAttachment> attachments =
+                messageAttachmentRepository
+                        .findByMessageIds(
+                                messageIds
+                        );
+
+
+        return attachments
+                .stream()
+                .collect(
+                        Collectors.groupingBy(
+                                attachment ->
+                                        attachment
                                                 .getMessenger()
                                                 .getId()
                         )

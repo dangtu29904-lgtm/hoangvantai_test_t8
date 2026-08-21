@@ -177,4 +177,28 @@ public class ChatController {
                                 )
                 );
     }
+    @MessageMapping("/chat.typing")
+    public void typing(
+            TypingRequest request,
+            Principal principal
+    ) {
+        Long currentUserId =
+                extractUserId(principal);
+        TypingResult result =
+                messageService.handleTyping(
+                        currentUserId,
+                        request
+                );
+        for (
+                String destination
+                : result.recipientDestinations()
+        ) {
+            messagingTemplate
+                    .convertAndSendToUser(
+                            destination,
+                            "/queue/chat.typing",
+                            result.response()
+                    );
+        }
+    }
 }

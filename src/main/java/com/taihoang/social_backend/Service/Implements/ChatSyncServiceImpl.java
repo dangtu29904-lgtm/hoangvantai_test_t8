@@ -1,15 +1,11 @@
 package com.taihoang.social_backend.Service.Implements;
 
-import com.taihoang.social_backend.Entity.MessageReaction;
-import com.taihoang.social_backend.Entity.Messenger;
-import com.taihoang.social_backend.Entity.MessengerStatus;
+import com.taihoang.social_backend.Entity.*;
+import com.taihoang.social_backend.Repository.MessageAttachmentRepository;
 import com.taihoang.social_backend.Repository.MessageReactionRepository;
 import com.taihoang.social_backend.Repository.MessengerStatusRepository;
 import com.taihoang.social_backend.Service.ChatSyncService;
-import com.taihoang.social_backend.dto.ChatSyncResponse;
-import com.taihoang.social_backend.dto.MessageReactionItemResponse;
-import com.taihoang.social_backend.dto.MessageResponse;
-import com.taihoang.social_backend.dto.ReplyMessageResponse;
+import com.taihoang.social_backend.dto.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -27,6 +23,7 @@ public class ChatSyncServiceImpl implements ChatSyncService {
 
     private final MessengerStatusRepository messengerStatusRepository;
     private final MessageReactionRepository messageReactionRepository ;
+    private final MessageAttachmentRepository messageAttachmentRepository;
 
     /**
      * Lay nhung tin nhan ma thiet bi cua user chua xac nhan delivered.
@@ -81,15 +78,44 @@ public class ChatSyncServiceImpl implements ChatSyncService {
                                                         .getId()
                                 )
                         );
-        List<MessageResponse> items =  messages
-                .stream()
-                .map(messenger ->
-                        toMessageResponse(
-                                messenger,
-                                reactionsByMessageId
+
+        // ==========================================
+        // BULK LOAD ATTACHMENTS
+        // ==========================================
+
+        List<MessageAttachment> attachments =
+                messageIds.isEmpty()
+                        ? List.of()
+                        : messageAttachmentRepository
+                        .findByMessageIds(
+                                messageIds
+                        );
+
+
+        Map<Long, List<MessageAttachment>>
+                attachmentsByMessageId =
+
+                attachments
+                        .stream()
+                        .collect(
+                                Collectors.groupingBy(
+                                        attachment ->
+                                                attachment
+                                                        .getMessenger()
+                                                        .getId()
+                                )
+                        );
+        List<MessageResponse> items =
+                messages
+                        .stream()
+                        .map(messenger ->
+                                toMessageResponse(
+                                        messenger,
+                                        reactionsByMessageId,
+                                        attachmentsByMessageId
+                                )
                         )
-                )
-                .toList();
+                        .toList();
 
         Long nextAfterMessageId = buildNextAfterMessageId(pageStatuses, hasMore);
         return new ChatSyncResponse(items, nextAfterMessageId, hasMore);
@@ -151,7 +177,9 @@ public class ChatSyncServiceImpl implements ChatSyncService {
     private MessageResponse toMessageResponse(
             Messenger messenger,
             Map<Long, List<MessageReaction>>
-                    reactionsByMessageId
+                    reactionsByMessageId,
+            Map<Long, List<MessageAttachment>>
+                    attachmentsByMessageId
     ) {
         ReplyMessageResponse replyResponse = null;
 
@@ -187,6 +215,40 @@ public class ChatSyncServiceImpl implements ChatSyncService {
                                 messenger.getId(),
                                 List.of()
                         );
+        List<MessageAttachment> messageAttachments =
+                attachmentsByMessageId
+                        .getOrDefault(
+                                messenger.getId(),
+                                List.of()
+                        );
+        List<MessageAttachmentResponse>
+                attachmentResponses;
+        if (messenger.getRecalledAt() != null) {
+            // Message đã recall thì không được lộ
+            // URL file cũ nữa.
+            attachmentResponses =
+                    List.of();
+
+        } else {
+            attachmentResponses =
+                    messageAttachments
+                            .stream()
+                            .map(attachment -> {
+                                ChatUpload upload =
+                                        attachment
+                                                .getChatUpload();
+
+                                return new MessageAttachmentResponse(
+                                        attachment.getId(),
+                                        upload.getAttachmentType(),
+                                        upload.getSecureUrl(),
+                                        upload.getOriginalFileName(),
+                                        upload.getContentType(),
+                                        upload.getFileSize()
+                                );
+                            })
+                            .toList();
+        }
         List<MessageReactionItemResponse>
                 reactionResponses;
         if (messenger.getRecalledAt() != null) {
@@ -227,7 +289,8 @@ public class ChatSyncServiceImpl implements ChatSyncService {
                 replyResponse,
                 messenger.getEditedAt(),
                 messenger.getRecalledAt(),
-                reactionResponses
+                reactionResponses,
+                attachmentResponses
         );
     }
 }

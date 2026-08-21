@@ -7,8 +7,11 @@ import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class MessageService {
@@ -19,11 +22,16 @@ public class MessageService {
     private final MessengerStatusRepository messengerStatusRepository;
     private final MessageUserStateRepository messageUserStateRepository ;
     private final MessageReactionRepository messageReactionRepository ;
+    private final ChatUploadRepository
+            chatUploadRepository;
+
+    private final MessageAttachmentRepository
+            messageAttachmentRepository;
     public MessageService(UserRepository userRepository,
                           ConversationRepository conversationRepository,
                           ConversationMemberRepository conversationMemberRepository,
                           MessengerRepository messengerRepository,
-                          MessengerStatusRepository messengerStatusRepository, MessageUserStateRepository messageUserStateRepository, MessageReactionRepository messageReactionRepository) {
+                          MessengerStatusRepository messengerStatusRepository, MessageUserStateRepository messageUserStateRepository, MessageReactionRepository messageReactionRepository, ChatUploadRepository chatUploadRepository, MessageAttachmentRepository messageAttachmentRepository) {
         this.userRepository = userRepository;
         this.conversationRepository = conversationRepository;
         this.conversationMemberRepository = conversationMemberRepository;
@@ -31,10 +39,13 @@ public class MessageService {
         this.messengerStatusRepository = messengerStatusRepository;
         this.messageUserStateRepository = messageUserStateRepository;
         this.messageReactionRepository = messageReactionRepository;
+        this.chatUploadRepository = chatUploadRepository;
+        this.messageAttachmentRepository = messageAttachmentRepository;
     }
 
     @Transactional
     public SendMessageResult handleSendMessage(Long senderId, MessageRequest request) {
+        validateMessageContent(request);
         User sender = userRepository.findById(senderId)
                 .orElseThrow(() -> new IllegalArgumentException("Khong tim thay user gui tin nhan"));
 
@@ -51,7 +62,16 @@ public class MessageService {
 
         return messengerRepository
                 .findByConversationIdAndClientMessageId(conversation.getId(), request.clientMessageId())
-                .map(message -> new SendMessageResult(toResponse(message), sender.getEmail(), List.of()))
+                .map(message -> {List<MessageAttachment> attachments = messageAttachmentRepository.findByMessageIdWithUpload(message.getId());
+                    return new SendMessageResult(
+                            toResponse(
+                                    message,
+                                    attachments
+                            ),
+                            sender.getEmail(),
+                            List.of()
+                    );
+                })
                 .orElseGet(() -> createMessage(sender, conversation, request));
     }
 
@@ -167,7 +187,6 @@ public class MessageService {
             Long currentUserId,
             EditMessageRequest request
     ) {
-
         User currentUser =
                 userRepository.findById(currentUserId)
                         .orElseThrow(() ->
@@ -175,8 +194,6 @@ public class MessageService {
                                         "Khong tim thay user"
                                 )
                         );
-
-
         Messenger messenger =
                 messengerRepository.findByIdForUpdate(request.messageId())
                         .orElseThrow(() ->
@@ -184,8 +201,6 @@ public class MessageService {
                                         "Khong tim thay tin nhan"
                                 )
                         );
-
-
         // ============================
         // CHI NGUOI GUI MOI DUOC SUA
         // ============================
@@ -194,13 +209,10 @@ public class MessageService {
                 .getUser()
                 .getId()
                 .equals(currentUser.getId())) {
-
             throw new IllegalArgumentException(
                     "Ban khong co quyen sua tin nhan nay"
             );
         }
-
-
         messenger.setContent(
                 request.content().trim()
         );
@@ -240,37 +252,130 @@ public class MessageService {
                                 member.getUser().getEmail()
                         )
                         .toList();
-
-
         return new EditMessageResult(
                 response,
                 destinations
         );
     }
+    private SendMessageResult createMessage(
 
-    private SendMessageResult createMessage(User sender, Conversations conversation, MessageRequest request) {
-        Long nextSequenceNumber = messengerRepository.findMaxSequenceNumberByConversationId(conversation.getId()) + 1;
+            User sender,
+
+            Conversations conversation,
+
+            MessageRequest request
+    ) {
+
+        Long nextSequenceNumber =
+                messengerRepository
+                        .findMaxSequenceNumberByConversationId(
+                                conversation.getId()
+                        ) + 1;
+
+
+        // ======================================
+        // REPLY
+        // ======================================
+
         Messenger replyToMessage =
                 resolveReplyMessage(
                         conversation,
                         request.replyToMessageId()
                 );
 
-        Messenger messenger = new Messenger();
-        messenger.setConversation(conversation);
-        messenger.setUser(sender);
-        messenger.setClientMessageId(request.clientMessageId());
-        messenger.setContent(request.content());
-        messenger.setSequenceNumber(nextSequenceNumber);
-        messenger.setSentAt(LocalDateTime.now());
 
-        messenger.setReplyToMessage(replyToMessage);
-        Messenger savedMessenger = messengerRepository.save(messenger);
-        List<String> recipientDestinations = createStatusesForRecipients(savedMessenger, sender);
+        // ======================================
+        // CREATE MESSAGE
+        // ======================================
 
-        return new SendMessageResult(toResponse(savedMessenger), sender.getEmail(), recipientDestinations);
+        Messenger messenger =
+                new Messenger();
+
+
+        messenger.setConversation(
+                conversation
+        );
+
+        messenger.setUser(
+                sender
+        );
+
+        messenger.setClientMessageId(
+                request.clientMessageId()
+        );
+
+
+        String normalizedContent =
+                request.content() == null
+                        ? null
+                        : request.content().trim();
+
+
+        messenger.setContent(
+                normalizedContent
+        );
+
+        messenger.setSequenceNumber(
+                nextSequenceNumber
+        );
+
+        messenger.setSentAt(
+                LocalDateTime.now()
+        );
+
+        messenger.setReplyToMessage(
+                replyToMessage
+        );
+
+
+        Messenger savedMessenger =
+                messengerRepository
+                        .save(messenger);
+
+
+        // ======================================
+        // ATTACHMENTS
+        // ======================================
+
+        List<Long> uploadIds =
+                normalizeUploadIds(request);
+
+
+        List<MessageAttachment> attachments =
+                createAttachments(
+                        savedMessenger,
+                        sender,
+                        uploadIds
+                );
+
+
+        // ======================================
+        // DELIVERED / SEEN STATUS
+        // ======================================
+
+        List<String> recipientDestinations =
+                createStatusesForRecipients(
+                        savedMessenger,
+                        sender
+                );
+
+
+        // ======================================
+        // RESPONSE
+        // ======================================
+
+        return new SendMessageResult(
+
+                toResponse(
+                        savedMessenger,
+                        attachments
+                ),
+
+                sender.getEmail(),
+
+                recipientDestinations
+        );
     }
-
     private List<String> createStatusesForRecipients(Messenger messenger, User sender) {
         List<MessengerStatus> statuses = conversationMemberRepository
                 .findRecipientsByConversationId(messenger.getConversation().getId(), sender.getId())
@@ -317,12 +422,11 @@ public class MessageService {
                     "Khong the reply tin nhan cua conversation khac"
             );
         }
-
         return replyToMessage;
     }
-
     private MessageResponse toResponse(
-            Messenger messenger
+            Messenger messenger,
+            List<MessageAttachment> attachments
     ) {
         ReplyMessageResponse replyResponse = null;
         Messenger replyToMessage =
@@ -352,11 +456,30 @@ public class MessageService {
                 messenger.getRecalledAt() != null
                         ? null
                         : messenger.getContent();
+        List<MessageAttachmentResponse>
+                attachmentResponses;
+
+
+        if (messenger.getRecalledAt() != null) {
+
+            attachmentResponses =
+                    List.of();
+
+        } else {
+
+            attachmentResponses =
+                    toAttachmentResponses(
+                            attachments
+                    );
+        }
         return new MessageResponse(
+
                 messenger.getId(),
+
                 messenger
                         .getConversation()
                         .getId(),
+
                 messenger.getClientMessageId(),
 
                 messenger.getSequenceNumber(),
@@ -364,15 +487,24 @@ public class MessageService {
                 messenger
                         .getUser()
                         .getId(),
+
                 messenger
                         .getUser()
                         .getUserName(),
+
                 visibleContent,
+
                 messenger.getSentAt(),
+
                 replyResponse,
+
                 messenger.getEditedAt(),
+
                 messenger.getRecalledAt(),
-                List.of()
+
+                List.of(),
+
+                attachmentResponses
         );
     }
     @Transactional
@@ -479,20 +611,14 @@ public class MessageService {
                                 conversationId,
                                 currentUserId
                         );
-
-
         if (!isMember) {
-
             throw new IllegalArgumentException(
                     "User khong thuoc conversation nay"
             );
         }
-
-
         // ====================================
         // IDEMPOTENT
         // ====================================
-
         MessageUserState state =
                 messageUserStateRepository
                         .findByMessengerIdAndUserId(
@@ -500,37 +626,24 @@ public class MessageService {
                                 currentUserId
                         )
                         .orElseGet(() -> {
-
                             MessageUserState newState =
                                     new MessageUserState();
 
                             newState.setMessenger(messenger);
                             newState.setUser(currentUser);
-
                             return newState;
                         });
-
-
         if (state.getDeletedAt() == null) {
-
             state.setDeletedAt(
                     LocalDateTime.now()
             );
-
             messageUserStateRepository.save(state);
         }
-
-
         return new DeleteMessageForMeResult(
-
                 currentUser.getEmail(),
-
                 new DeleteMessageForMeResponse(
-
                         messenger.getId(),
-
                         conversationId,
-
                         state.getDeletedAt()
                 )
         );
@@ -540,7 +653,6 @@ public class MessageService {
             Long currentUserId,
             MessageReactionRequest request
     ) {
-
         User currentUser =
                 userRepository
                         .findById(currentUserId)
@@ -549,8 +661,6 @@ public class MessageService {
                                         "Khong tim thay user"
                                 )
                         );
-
-
         Messenger messenger =
                 messengerRepository
                         .findById(request.messageId())
@@ -559,46 +669,33 @@ public class MessageService {
                                         "Khong tim thay tin nhan"
                                 )
                         );
-
-
         Long conversationId =
                 messenger
                         .getConversation()
                         .getId();
-
-
         // ======================================
         // CHECK MEMBERSHIP
         // ======================================
-
         boolean isMember =
                 conversationMemberRepository
                         .existsByConversationIdAndUserId(
                                 conversationId,
                                 currentUserId
                         );
-
-
         if (!isMember) {
-
             throw new IllegalArgumentException(
                     "User khong thuoc conversation nay"
             );
         }
-
-
         // ======================================
         // MESSAGE DA RECALL THI KHONG REACT
         // ======================================
-
         if (messenger.getRecalledAt() != null) {
 
             throw new IllegalArgumentException(
                     "Khong the reaction tin nhan da thu hoi"
             );
         }
-
-
         // ======================================
         // MESSAGE DA DELETE FOR ME
         // ======================================
@@ -613,16 +710,11 @@ public class MessageService {
                                 state.getDeletedAt() != null
                         )
                         .orElse(false);
-
-
         if (deletedForMe) {
-
             throw new IllegalArgumentException(
                     "Tin nhan da bi xoa o phia ban"
             );
         }
-
-
         return applyReaction(
                 currentUser,
                 messenger,
@@ -641,15 +733,10 @@ public class MessageService {
                                 messenger.getId(),
                                 currentUser.getId()
                         );
-
-
         MessageReactionAction action;
-
-
         // =====================================
         // CHUA CO REACTION
         // =====================================
-
         if (existingReaction.isEmpty()) {
 
             MessageReaction reaction =
@@ -662,56 +749,38 @@ public class MessageService {
             messageReactionRepository.save(
                     reaction
             );
-
             action = MessageReactionAction.ADD;
         }
-
-
-        // =====================================
+        // ====================================
         // DA CO REACTION
         // =====================================
-
         else {
-
             MessageReaction reaction =
                     existingReaction.get();
-
-
             // =============================
             // BAM LAI CUNG REACTION
             // → REMOVE
             // =============================
-
             if (reaction.getType() == requestedType) {
-
                 messageReactionRepository.delete(
                         reaction
                 );
-
                 action =
                         MessageReactionAction.REMOVE;
             }
-
-
             // =============================
             // DOI REACTION
             // LOVE → HAHA
             // =============================
-
             else {
-
                 reaction.setType(requestedType);
-
                 messageReactionRepository.save(
                         reaction
                 );
-
                 action =
                         MessageReactionAction.UPDATE;
             }
         }
-
-
         return buildReactionResult(
                 currentUser,
                 messenger,
@@ -720,39 +789,25 @@ public class MessageService {
         );
     }
     private MessageReactionResult buildReactionResult(
-
             User currentUser,
-
             Messenger messenger,
-
             ReactionType type,
-
             MessageReactionAction action
     ) {
-
         Long conversationId =
                 messenger
                         .getConversation()
                         .getId();
 
-
         MessageReactionResponse response =
                 new MessageReactionResponse(
-
                         messenger.getId(),
-
                         conversationId,
-
                         currentUser.getId(),
-
                         currentUser.getUserName(),
-
                         type,
-
                         action
                 );
-
-
         List<String> destinations =
                 conversationMemberRepository
                         .findMembersByConversationId(
@@ -770,6 +825,282 @@ public class MessageService {
         return new MessageReactionResult(
                 response,
                 destinations
+        );
+    }
+    private void validateMessageContent(
+            MessageRequest request
+    ) {
+
+        boolean hasText =
+                request.content() != null
+                        && !request.content()
+                        .trim()
+                        .isEmpty();
+
+
+        boolean hasUploads =
+                request.uploadIds() != null
+                        && !request.uploadIds()
+                        .isEmpty();
+
+
+        if (!hasText && !hasUploads) {
+
+            throw new IllegalArgumentException(
+                    "Tin nhan phai co noi dung hoac file dinh kem"
+            );
+        }
+    }
+    private List<Long> normalizeUploadIds(
+            MessageRequest request
+    ) {
+
+        if (request.uploadIds() == null) {
+            return List.of();
+        }
+
+        return request.uploadIds();
+    }
+    private List<ChatUpload> resolveUploads(
+            User sender,
+            List<Long> uploadIds
+    ) {
+
+        if (uploadIds.isEmpty()) {
+            return List.of();
+        }
+
+
+        long distinctCount =
+                uploadIds
+                        .stream()
+                        .distinct()
+                        .count();
+
+
+        if (distinctCount != uploadIds.size()) {
+
+            throw new IllegalArgumentException(
+                    "uploadIds khong duoc trung nhau"
+            );
+        }
+
+
+        List<ChatUpload> uploads =
+                chatUploadRepository
+                        .findOwnedUploadsForUpdate(
+                                uploadIds,
+                                sender.getId()
+                        );
+
+
+        // ==================================
+        // CO ID KHONG TON TAI / KHONG THUOC USER
+        // ==================================
+
+        if (uploads.size() != uploadIds.size()) {
+
+            throw new IllegalArgumentException(
+                    "Co file khong ton tai hoac khong thuoc user"
+            );
+        }
+
+
+        // ==================================
+        // FILE DA DUOC DUNG
+        // ==================================
+
+        boolean hasUsedUpload =
+                uploads
+                        .stream()
+                        .anyMatch(upload ->
+                                upload.getUsedAt() != null
+                        );
+
+
+        if (hasUsedUpload) {
+
+            throw new IllegalArgumentException(
+                    "Co file da duoc su dung cho tin nhan khac"
+            );
+        }
+
+
+        return uploads;
+    }
+    private List<MessageAttachment> createAttachments(
+            Messenger messenger,
+            User sender,
+            List<Long> uploadIds
+    ) {
+        if (uploadIds.isEmpty()) {
+            return List.of();
+        }
+        // ====================================
+        // 1. CHECK + LOCK UPLOADS
+        // ====================================
+        List<ChatUpload> uploads =
+                resolveUploads(
+                        sender,
+                        uploadIds
+                );
+        /*
+         * Query IN không đảm bảo thứ tự.
+         *
+         * Chuyển thành Map:
+         *
+         * uploadId -> ChatUpload
+         */
+        Map<Long, ChatUpload> uploadById =
+                uploads
+                        .stream()
+                        .collect(
+                                Collectors.toMap(
+                                        ChatUpload::getId,
+                                        upload -> upload
+                                )
+                        );
+        List<MessageAttachment> attachments =
+                new ArrayList<>();
+        LocalDateTime now =
+                LocalDateTime.now();
+        // ====================================
+        // 2. DUYET DUNG THU TU CLIENT GUI
+        // ====================================
+        for (
+                int i = 0;
+                i < uploadIds.size();
+                i++
+        ) {
+            Long uploadId =
+                    uploadIds.get(i);
+            ChatUpload upload =
+                    uploadById.get(uploadId);
+            MessageAttachment attachment =
+                    new MessageAttachment();
+            attachment.setMessenger(
+                    messenger
+            );
+            attachment.setChatUpload(
+                    upload
+            );
+            attachment.setPosition(i
+            );
+            attachments.add(
+                    attachment
+            );
+            // File da duoc dung
+            upload.setUsedAt(
+                    now
+            );
+        }
+        // ====================================
+        // 3. SAVE
+        // ====================================
+        List<MessageAttachment> saved =
+                messageAttachmentRepository
+                        .saveAll(attachments);
+        chatUploadRepository
+                .saveAll(uploads);
+
+
+        return saved;
+    }
+    private List<MessageAttachmentResponse>
+    toAttachmentResponses(
+            List<MessageAttachment> attachments
+    ) {
+        return attachments
+                .stream()
+                .map(attachment -> {
+                    ChatUpload upload =
+                            attachment.getChatUpload();
+                    return new MessageAttachmentResponse(
+                            attachment.getId(),
+                            upload.getAttachmentType(),
+                            upload.getSecureUrl(),
+                            upload.getOriginalFileName(),
+                            upload.getContentType(),
+                            upload.getFileSize()
+                    );
+                }).toList();
+    }
+    public TypingResult handleTyping(
+            Long currentUserId,
+            TypingRequest request
+    ) {
+        // =========================================
+        // 1. TIM USER
+        // =========================================
+        User currentUser =
+                userRepository
+                        .findById(currentUserId)
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay user"
+                                )
+                        );
+        // =========================================
+        // 2. KIEM TRA CONVERSATION
+        // =========================================
+        Conversations conversation =
+                conversationRepository
+                        .findById(request.conversationId())
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(
+                                        "Khong tim thay conversation"
+                                )
+                        );
+        // =========================================
+        // 3. CHECK MEMBERSHIP
+        // =========================================
+        boolean isMember =
+                conversationMemberRepository
+                        .existsByConversationIdAndUserId(
+                                conversation.getId(),
+                                currentUserId
+                        );
+        if (!isMember) {
+            throw new IllegalArgumentException(
+                    "User khong thuoc conversation nay"
+            );
+        }
+        // =========================================
+        // 4. TAO RESPONSE
+        // =========================================
+
+        TypingResponse response =
+                new TypingResponse(
+
+                        conversation.getId(),
+
+                        currentUser.getId(),
+
+                        currentUser.getUserName(),
+
+                        request.typing()
+                );
+
+
+        // =========================================
+        // 5. LAY CAC USER KHAC TRONG CONVERSATION
+        // =========================================
+        List<String> recipientDestinations =
+                conversationMemberRepository
+                        .findRecipientsByConversationId(
+                                conversation.getId(),
+                                currentUserId
+                        )
+                        .stream()
+                        .map(member ->
+                                member
+                                        .getUser()
+                                        .getEmail()
+                        )
+                        .toList();
+        return new TypingResult(
+                response,
+                recipientDestinations
         );
     }
 }
