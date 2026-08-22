@@ -70,38 +70,17 @@ public class ChatUploadServiceImpl implements ChatUploadService {
                 file.getSize();
 
 
-        switch (type) {
-
-            case IMAGE -> {
-
-                if (size > MAX_IMAGE_SIZE) {
-
-                    throw new IllegalArgumentException(
-                            "Anh khong duoc vuot qua 10MB"
-                    );
-                }
+        if (type == AttachmentType.IMAGE) {
+            if (size > MAX_IMAGE_SIZE) {
+                throw new IllegalArgumentException("Anh khong duoc vuot qua 10MB");
             }
-
-
-            case VIDEO -> {
-
-                if (size > MAX_VIDEO_SIZE) {
-
-                    throw new IllegalArgumentException(
-                            "Video khong duoc vuot qua 50MB"
-                    );
-                }
+        } else if (type == AttachmentType.VIDEO) {
+            if (size > MAX_VIDEO_SIZE) {
+                throw new IllegalArgumentException("Video khong duoc vuot qua 50MB");
             }
-
-
-            case FILE -> {
-
-                if (size > MAX_FILE_SIZE) {
-
-                    throw new IllegalArgumentException(
-                            "File khong duoc vuot qua 20MB"
-                    );
-                }
+        } else if (type == AttachmentType.FILE) {
+            if (size > MAX_FILE_SIZE) {
+                throw new IllegalArgumentException("File khong duoc vuot qua 20MB");
             }
         }
     }

@@ -1,17 +1,64 @@
 package com.taihoang.social_backend.Service;
 
-import com.taihoang.social_backend.Entity.*;
-import com.taihoang.social_backend.Repository.*;
-import com.taihoang.social_backend.dto.*;
-import jakarta.transaction.Transactional;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Service;
+
+import com.taihoang.social_backend.Entity.ChatUpload;
+import com.taihoang.social_backend.Entity.Conversations;
+import com.taihoang.social_backend.Entity.MessageAttachment;
+import com.taihoang.social_backend.Entity.MessageReaction;
+import com.taihoang.social_backend.Entity.MessageReactionAction;
+import com.taihoang.social_backend.Entity.MessageUserState;
+import com.taihoang.social_backend.Entity.Messenger;
+import com.taihoang.social_backend.Entity.MessengerStatus;
+import com.taihoang.social_backend.Entity.ReactionType;
+import com.taihoang.social_backend.Entity.User;
+import com.taihoang.social_backend.Repository.ChatUploadRepository;
+import com.taihoang.social_backend.Repository.ConversationMemberRepository;
+import com.taihoang.social_backend.Repository.ConversationRepository;
+import com.taihoang.social_backend.Repository.MessageAttachmentRepository;
+import com.taihoang.social_backend.Repository.MessageReactionRepository;
+import com.taihoang.social_backend.Repository.MessageUserStateRepository;
+import com.taihoang.social_backend.Repository.MessengerRepository;
+import com.taihoang.social_backend.Repository.MessengerStatusRepository;
+import com.taihoang.social_backend.Repository.UserRepository;
+import com.taihoang.social_backend.dto.DeleteMessageForMeRequest;
+import com.taihoang.social_backend.dto.DeleteMessageForMeResponse;
+import com.taihoang.social_backend.dto.DeleteMessageForMeResult;
+import com.taihoang.social_backend.dto.DeliveredRequest;
+import com.taihoang.social_backend.dto.DeliveredResponse;
+import com.taihoang.social_backend.dto.DeliveredResult;
+import com.taihoang.social_backend.dto.EditMessageRequest;
+import com.taihoang.social_backend.dto.EditMessageResponse;
+import com.taihoang.social_backend.dto.EditMessageResult;
+import com.taihoang.social_backend.dto.MessageAttachmentResponse;
+import com.taihoang.social_backend.dto.MessageReactionRequest;
+import com.taihoang.social_backend.dto.MessageReactionResponse;
+import com.taihoang.social_backend.dto.MessageReactionResult;
+import com.taihoang.social_backend.dto.MessageRequest;
+import com.taihoang.social_backend.dto.MessageResponse;
+import com.taihoang.social_backend.dto.RecallMessageRequest;
+import com.taihoang.social_backend.dto.RecallMessageResponse;
+import com.taihoang.social_backend.dto.RecallMessageResult;
+import com.taihoang.social_backend.dto.ReplyMessageResponse;
+import com.taihoang.social_backend.dto.SeenConversationRequest;
+import com.taihoang.social_backend.dto.SeenConversationResponse;
+import com.taihoang.social_backend.dto.SeenConversationResult;
+import com.taihoang.social_backend.dto.SeenRequest;
+import com.taihoang.social_backend.dto.SeenResponse;
+import com.taihoang.social_backend.dto.SeenResult;
+import com.taihoang.social_backend.dto.SendMessageResult;
+import com.taihoang.social_backend.dto.TypingRequest;
+import com.taihoang.social_backend.dto.TypingResponse;
+import com.taihoang.social_backend.dto.TypingResult;
+
+import jakarta.transaction.Transactional;
 
 @Service
 public class MessageService {
@@ -431,14 +478,13 @@ public class MessageService {
         ReplyMessageResponse replyResponse = null;
         Messenger replyToMessage =
                 messenger.getReplyToMessage();
-        boolean recalled =
-                replyToMessage.getRecalledAt() != null;
-
-        String replyContent =
-                recalled
-                        ? null
-                        : replyToMessage.getContent();
         if (replyToMessage != null) {
+            boolean recalled =
+                    replyToMessage.getRecalledAt() != null;
+            String replyContent =
+                    recalled
+                            ? null
+                            : replyToMessage.getContent();
             replyResponse =
                     new ReplyMessageResponse(
                             replyToMessage.getId(),
