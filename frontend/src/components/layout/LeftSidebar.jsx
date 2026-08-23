@@ -18,7 +18,7 @@ const LeftSidebar = () => {
   );
 
   return (
-    <div className="flex flex-col w-full h-full bg-white">
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-white">
       {/* Header */}
       <div className="px-4 pt-4 pb-2 flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Chats</h1>

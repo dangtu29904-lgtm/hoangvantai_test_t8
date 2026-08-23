@@ -20,7 +20,7 @@ const RightSidebar = () => {
   const statusText = isGroup ? `${activeConversationDetail?.members?.length || 0} thành viên` : (isOnline ? 'Active now' : 'Offline');
 
   return (
-    <div className="flex flex-col w-full h-full overflow-y-auto bg-white border-l border-gray-200">
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-y-auto bg-white border-l border-gray-200">
       {/* Profile Header */}
       <div className="flex flex-col items-center pt-8 pb-4 px-4 border-b border-gray-100">
         <div className="relative">
@@ -62,7 +62,7 @@ const RightSidebar = () => {
           <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
             <Users size={14} /> Thành viên ({activeConversationDetail.members.length})
           </h3>
-          <div className="space-y-2">
+          <div className="max-h-40 space-y-2 overflow-y-auto pr-1">
             {activeConversationDetail.members.map(member => {
               const memberOnline = onlineUsers[member.userId]?.status === 'online';
               const isMe = member.userId === user?.id;

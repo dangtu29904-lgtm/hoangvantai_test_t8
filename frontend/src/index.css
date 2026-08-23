@@ -7,7 +7,20 @@ body {
   padding: 0;
   color: var(--color-gray-900);
   background-color: var(--color-gray-50);
-  overflow: hidden; /* App-like feel */
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100dvh;
+  overflow-y: auto;
+}
+
+/* Windows taskbars can overlay short maximized browser viewports. */
+@media (min-width: 768px) and (max-height: 820px) {
+  #root {
+    box-sizing: border-box;
+    padding-bottom: 48px;
+  }
 }
 
 /* Custom scrollbar */
