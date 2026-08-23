@@ -353,7 +353,7 @@ public class PostServiceImpl
                     "Ban khong co quyen xoa bai viet nay"
             );
         }
-        post.softDelete(post.getAuthor());
+        post.softDelete(post.getAuthor(), com.taihoang.social_backend.Entity.DeleteType.USER_DELETE);
 
         postRepository.save(post);
     }

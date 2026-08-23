@@ -45,4 +45,8 @@ public class Messenger {
     @Enumerated(EnumType.STRING)
     @Column(name = "message_type")
     private MessageType messageType = MessageType.USER;
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "story_reference_id")
+    private Story storyReference;
 }

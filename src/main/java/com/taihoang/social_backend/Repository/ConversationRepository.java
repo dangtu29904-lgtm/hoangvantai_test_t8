@@ -38,4 +38,10 @@ public interface ConversationRepository extends JpaRepository<Conversations, Lon
             @Param("secondUserId") Long secondUserId,
             Pageable pageable
     );
+
+    // ==========================================
+    // ADMIN STATISTICS
+    // ==========================================
+
+    long countByType(Conversations.type_chat type);
 }

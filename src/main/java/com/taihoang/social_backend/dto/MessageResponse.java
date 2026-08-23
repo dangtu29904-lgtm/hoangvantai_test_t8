@@ -33,7 +33,9 @@ public record MessageResponse(
 
         List<MessageReactionItemResponse> reactions,
 
-        List<MessageAttachmentResponse> attachments
+        List<MessageAttachmentResponse> attachments,
+
+        StoryMessageReferenceResponse storyReference
 
 ) {
 }

@@ -42,4 +42,11 @@ public interface NotificationRepository
             Notification.NotificationType type,
             Long postId
     );
+
+    Optional<Notification> findByReceiver_IdAndActor_IdAndTypeAndStory_Id(
+            Long receiverId,
+            Long actorId,
+            Notification.NotificationType type,
+            Long storyId
+    );
 }

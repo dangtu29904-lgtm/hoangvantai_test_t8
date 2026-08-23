@@ -21,4 +21,6 @@ public interface NotificationService {
     public void notifyPostShare(User actor, com.taihoang.social_backend.Entity.Post originalPost, com.taihoang.social_backend.Entity.Post sharedPost);
     
     public void notifyPostMention(User actor, com.taihoang.social_backend.Entity.Post post, User mentionedUser);
+    
+    public void notifyStoryReaction(User actor, com.taihoang.social_backend.Entity.Story story);
 }

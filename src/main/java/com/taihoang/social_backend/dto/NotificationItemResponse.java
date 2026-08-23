@@ -22,6 +22,8 @@ public record NotificationItemResponse(
 
         Long commentId,
 
+        Long storyId,
+
         String message,
 
         boolean read,

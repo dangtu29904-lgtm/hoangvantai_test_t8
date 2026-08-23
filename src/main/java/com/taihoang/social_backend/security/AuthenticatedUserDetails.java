@@ -15,12 +15,15 @@ public class AuthenticatedUserDetails implements UserDetails {
     private final String password;
     private final User.Role role;
 
+    private final com.taihoang.social_backend.Entity.UserStatus status;
+
     public AuthenticatedUserDetails(User user) {
         this.id = user.getId();
         this.userName = user.getUserName();
         this.email = user.getEmail();
         this.password = user.getPassword();
         this.role = user.getRole();
+        this.status = user.getStatus();
     }
 
     public Long getId() {
@@ -48,5 +51,10 @@ public class AuthenticatedUserDetails implements UserDetails {
     @Override
     public String getUsername() {
         return email;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return status == com.taihoang.social_backend.Entity.UserStatus.ACTIVE;
     }
 }

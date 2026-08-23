@@ -14,5 +14,7 @@ public enum MessageType {
 
     GROUP_MEMBER_LEFT,
 
-    GROUP_MEMBER_ROLE_CHANGED
+    GROUP_MEMBER_ROLE_CHANGED,
+    
+    STORY_REPLY
 }

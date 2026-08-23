@@ -98,6 +98,8 @@ public class NotificationServiceImpl implements NotificationService {
                 
                 notification.getComment() != null ? notification.getComment().getId() : null,
 
+                notification.getStory() != null ? notification.getStory().getId() : null,
+
                 buildMessage(notification),
 
                 notification.isRead(),
@@ -152,6 +154,10 @@ public class NotificationServiceImpl implements NotificationService {
             case POST_MENTION ->
                     actorName 
                             + " da nhac den ban trong mot bai viet";
+
+            case STORY_REACTION ->
+                    actorName
+                            + " da bay to cam xuc ve tin cua ban";
         };
     }
     @Override
@@ -445,5 +451,34 @@ public class NotificationServiceImpl implements NotificationService {
         notification.setPost(post);
         notification.setRead(false);
         saveAndPublishNotification(notification);
+    }
+
+    @Override
+    @Transactional
+    public void notifyStoryReaction(User actor, com.taihoang.social_backend.Entity.Story story) {
+        // No self-notification
+        if (actor.getId().equals(story.getAuthor().getId())) {
+            return;
+        }
+        // Deduplicate: max 1 STORY_REACTION per actor+story
+        notificationRepository
+            .findByReceiver_IdAndActor_IdAndTypeAndStory_Id(
+                    story.getAuthor().getId(),
+                    actor.getId(),
+                    Notification.NotificationType.STORY_REACTION,
+                    story.getId()
+            )
+            .ifPresentOrElse(
+                existing -> { /* already notified, skip */ },
+                () -> {
+                    Notification notification = new Notification();
+                    notification.setReceiver(story.getAuthor());
+                    notification.setActor(actor);
+                    notification.setType(Notification.NotificationType.STORY_REACTION);
+                    notification.setStory(story);
+                    notification.setRead(false);
+                    saveAndPublishNotification(notification);
+                }
+            );
     }
 }

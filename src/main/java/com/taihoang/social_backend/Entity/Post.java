@@ -66,6 +66,11 @@ public class Post {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "deleted_by")
     private User deletedBy;
+    
+    @Enumerated(EnumType.STRING)
+    @Column(name = "delete_type")
+    private DeleteType deleteType;
+    
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "shared_post_id")
     private Post sharedPost;
@@ -87,7 +92,7 @@ public class Post {
     public void preUpdate() {
         updatedAt = LocalDateTime.now();
     }
-    public void softDelete(User deletedBy) {
+    public void softDelete(User deletedBy, DeleteType deleteType) {
 
         if (deleted) {
             return;
@@ -96,6 +101,7 @@ public class Post {
         this.deleted = true;
         this.deletedAt = LocalDateTime.now();
         this.deletedBy = deletedBy;
+        this.deleteType = deleteType;
     }
     public void restore() {
 

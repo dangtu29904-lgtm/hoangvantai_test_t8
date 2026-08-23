@@ -224,7 +224,9 @@ public class GroupSystemMessageServiceImpl
 
                         List.of(),
 
-                        List.of()
+                        List.of(),
+
+                        null // storyReference: system message
                 );
         return new SystemMessageResult(
                 response,

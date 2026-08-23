@@ -572,7 +572,9 @@ public class MessageService {
 
                 List.of(),
 
-                attachmentResponses
+                attachmentResponses,
+
+                null // storyReference: populated by StoryReplyService or message history via per-request mapping
         );
     }
     @Transactional

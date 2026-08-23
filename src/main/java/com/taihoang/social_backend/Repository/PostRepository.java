@@ -103,4 +103,48 @@ public interface PostRepository
     long countBySharedPost_IdAndDeletedFalse(
             Long postId
     );
+
+    // Admin: find post regardless of deleted state
+    // Admin: find post regardless of deleted state
+    Optional<Post> findById(Long id);
+
+    // ==========================================
+    // ADMIN STATISTICS
+    // ==========================================
+
+    long countByDeleted(boolean deleted);
+
+    @Query("SELECT COUNT(p) FROM Post p WHERE p.createdAt >= :start AND p.createdAt < :end")
+    long countByCreatedAtBetween(@Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);
+
+    @Query(value = "SELECT DATE(created_at) AS date, COUNT(*) AS count FROM posts WHERE created_at >= :start AND created_at < :end GROUP BY DATE(created_at) ORDER BY DATE(created_at)", nativeQuery = true)
+    java.util.List<com.taihoang.social_backend.dto.statistics.DailyCountProjection> countDailyGrowth(
+            @Param("start") java.time.LocalDateTime start,
+            @Param("end") java.time.LocalDateTime end
+    );
+
+    @Query("""
+    SELECT 
+        p.id AS postId,
+        p.author.id AS authorId,
+        p.author.userName AS authorName,
+        p.content AS content,
+        p.createdAt AS createdAt,
+        p.deleted AS deleted,
+        (SELECT COUNT(pr) FROM PostReaction pr WHERE pr.post.id = p.id) AS reactionCount,
+        (SELECT COUNT(pc) FROM PostComment pc WHERE pc.post.id = p.id AND pc.deleted = false) AS commentCount,
+        (SELECT COUNT(ps) FROM Post ps WHERE ps.sharedPost.id = p.id AND ps.deleted = false) AS shareCount
+    FROM Post p
+    WHERE p.createdAt >= :start AND p.createdAt < :end AND p.deleted = false
+    """)
+    java.util.List<com.taihoang.social_backend.dto.statistics.TopPostProjection> findTopPostsInPeriod(
+            @Param("start") java.time.LocalDateTime start,
+            @Param("end") java.time.LocalDateTime end
+    );
+
+    @Query("SELECT p.author.id AS userId, COUNT(p) AS count FROM Post p WHERE p.createdAt >= :start AND p.createdAt < :end AND p.deleted = false GROUP BY p.author.id")
+    java.util.List<com.taihoang.social_backend.dto.statistics.UserActivityCountProjection> countActiveUserPosts(
+            @Param("start") java.time.LocalDateTime start,
+            @Param("end") java.time.LocalDateTime end
+    );
 }

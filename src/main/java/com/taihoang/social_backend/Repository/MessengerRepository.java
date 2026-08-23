@@ -57,4 +57,23 @@ public interface MessengerRepository extends JpaRepository<Messenger, Long> {
             @Param("messageId")
             Long messageId
     );
+
+    // ==========================================
+    // ADMIN STATISTICS
+    // ==========================================
+
+    @Query("SELECT COUNT(m) FROM Messenger m WHERE m.sentAt >= :start AND m.sentAt < :end")
+    long countBySentAtBetween(@Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);
+
+    @Query(value = "SELECT DATE(sent_at) AS date, COUNT(*) AS count FROM messengers WHERE sent_at >= :start AND sent_at < :end GROUP BY DATE(sent_at) ORDER BY DATE(sent_at)", nativeQuery = true)
+    java.util.List<com.taihoang.social_backend.dto.statistics.DailyCountProjection> countDailyGrowth(
+            @Param("start") java.time.LocalDateTime start,
+            @Param("end") java.time.LocalDateTime end
+    );
+
+    @Query("SELECT m.user.id AS userId, COUNT(m) AS count FROM Messenger m WHERE m.sentAt >= :start AND m.sentAt < :end GROUP BY m.user.id")
+    java.util.List<com.taihoang.social_backend.dto.statistics.UserActivityCountProjection> countActiveUserMessages(
+            @Param("start") java.time.LocalDateTime start,
+            @Param("end") java.time.LocalDateTime end
+    );
 }

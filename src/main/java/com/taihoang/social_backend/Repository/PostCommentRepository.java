@@ -33,4 +33,23 @@ public interface PostCommentRepository
     long countByPost_IdAndDeletedFalse(
             Long postId
     );
+
+    // ==========================================
+    // ADMIN STATISTICS
+    // ==========================================
+
+    @Query("SELECT COUNT(c) FROM PostComment c WHERE c.createdAt >= :start AND c.createdAt < :end")
+    long countByCreatedAtBetween(@Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);
+
+    @Query(value = "SELECT DATE(created_at) AS date, COUNT(*) AS count FROM post_comments WHERE created_at >= :start AND created_at < :end GROUP BY DATE(created_at) ORDER BY DATE(created_at)", nativeQuery = true)
+    java.util.List<com.taihoang.social_backend.dto.statistics.DailyCountProjection> countDailyGrowth(
+            @Param("start") java.time.LocalDateTime start,
+            @Param("end") java.time.LocalDateTime end
+    );
+
+    @Query("SELECT c.author.id AS userId, COUNT(c) AS count FROM PostComment c WHERE c.createdAt >= :start AND c.createdAt < :end AND c.deleted = false GROUP BY c.author.id")
+    java.util.List<com.taihoang.social_backend.dto.statistics.UserActivityCountProjection> countActiveUserComments(
+            @Param("start") java.time.LocalDateTime start,
+            @Param("end") java.time.LocalDateTime end
+    );
 }

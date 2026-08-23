@@ -65,6 +65,10 @@ public class Notification {
     @JoinColumn(name = "comment_id")
     private PostComment comment;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "story_id")
+    private Story story;
+
     @Column(
             name = "is_read",
             nullable = false
@@ -106,6 +110,8 @@ public class Notification {
         
         POST_SHARE,
         
-        POST_MENTION
+        POST_MENTION,
+        
+        STORY_REACTION
     }
 }

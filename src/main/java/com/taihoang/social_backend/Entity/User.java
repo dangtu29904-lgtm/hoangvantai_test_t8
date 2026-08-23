@@ -54,6 +54,10 @@ public class User {
     @OneToMany(mappedBy = "user")
     private List<MessengerStatus> messengerStatuses ;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false)
+    private UserStatus status = UserStatus.ACTIVE;
+
     @PrePersist
     public void prePersist() {
         if (role == null) {
@@ -61,6 +65,9 @@ public class User {
         }
         if (creatAt == null) {
             creatAt = LocalDate.now();
+        }
+        if (status == null) {
+            status = UserStatus.ACTIVE;
         }
     }
 
