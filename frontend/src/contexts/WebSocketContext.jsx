@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { wsService } from '../services/websocket/stompClient';
 
@@ -15,17 +15,24 @@ export const useWebSocket = () => {
 export const WebSocketProvider = ({ children }) => {
   const { token, isAuthenticated } = useAuth();
   const [isConnected, setIsConnected] = useState(false);
+  // Incremented on every successful STOMP connect (1 = first, 2+ = reconnect)
+  const [connectCount, setConnectCount] = useState(0);
 
   useEffect(() => {
     if (isAuthenticated && token) {
       wsService.connect(
         token,
-        () => setIsConnected(true),
+        // onConnect receives the running connectCount from stompClient
+        (count) => {
+          setIsConnected(true);
+          setConnectCount(count);
+        },
         () => setIsConnected(false)
       );
     } else {
       wsService.disconnect();
       setIsConnected(false);
+      setConnectCount(0);
     }
 
     return () => {
@@ -34,7 +41,7 @@ export const WebSocketProvider = ({ children }) => {
   }, [token, isAuthenticated]);
 
   return (
-    <WebSocketContext.Provider value={{ isConnected, wsService }}>
+    <WebSocketContext.Provider value={{ isConnected, connectCount, wsService }}>
       {children}
     </WebSocketContext.Provider>
   );

@@ -6,6 +6,9 @@ class WebSocketService {
     this.subscribers = new Map(); // topic -> [callbacks]
     this.activeSubscriptions = new Map(); // topic -> subscription object
     this.presenceHeartbeatTimer = null;
+    // Incremented every time onConnect fires.
+    // 1 = first ever connect, 2+ = reconnect.
+    this.connectCount = 0;
   }
 
   connect(token, onConnect, onError) {
@@ -20,10 +23,13 @@ class WebSocketService {
       heartbeatIncoming: 10000,
       heartbeatOutgoing: 10000,
       onConnect: () => {
-        console.log('Connected to STOMP');
+        this.connectCount += 1;
+        const isReconnect = this.connectCount > 1;
+        console.log(`Connected to STOMP (connectCount=${this.connectCount}, isReconnect=${isReconnect})`);
         this._startPresenceHeartbeat();
-        if (onConnect) onConnect();
         this._resubscribeAll();
+        // Pass connectCount so callers know if this is a reconnect
+        if (onConnect) onConnect(this.connectCount);
       },
       onStompError: (frame) => {
         console.error('Broker reported error: ' + frame.headers['message']);
@@ -47,6 +53,8 @@ class WebSocketService {
       this.activeSubscriptions.clear();
     }
     this._stopPresenceHeartbeat();
+    // Reset so next connect() call starts fresh
+    this.connectCount = 0;
   }
 
   _startPresenceHeartbeat() {

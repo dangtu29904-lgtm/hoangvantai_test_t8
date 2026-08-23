@@ -1,10 +1,45 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import useChatStore from '../store/chatStore';
 import { useAuth } from '../contexts/AuthContext';
+import { chatApi } from '../services/api';
+
+// ─── Sync helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Fetch ALL missed messages from /user/chat/sync using cursor pagination.
+ * Returns flat list of message objects, ordered by id ASC (as backend guarantees).
+ * Guards against infinite loops: breaks if nextAfterMessageId doesn't advance.
+ */
+async function fetchAllMissedMessages() {
+  const allMessages = [];
+  let afterMessageId = null;
+  let safetyLimit = 50; // max pages — prevents runaway loop
+
+  while (safetyLimit-- > 0) {
+    const response = await chatApi.syncMessages(afterMessageId, 100);
+    const items = response.items ?? [];
+
+    allMessages.push(...items);
+
+    if (!response.hasMore) break;
+
+    const next = response.nextAfterMessageId ?? null;
+    // Guard: if cursor didn't advance, break to avoid infinite loop
+    if (next === null || next === afterMessageId) {
+      console.warn('[SyncMessages] nextAfterMessageId did not advance, stopping pagination.');
+      break;
+    }
+    afterMessageId = next;
+  }
+
+  return allMessages;
+}
+
+// ─── Hook ──────────────────────────────────────────────────────────────────
 
 const useChatSocket = () => {
-  const { isConnected, wsService } = useWebSocket();
+  const { isConnected, connectCount, wsService } = useWebSocket();
   const { user } = useAuth();
 
   const viewingConversationId = useChatStore(state => state.viewingConversationId);
@@ -13,6 +48,10 @@ const useChatSocket = () => {
   const updateMessageStatus = useChatStore(state => state.updateMessageStatus);
   const updateConversationFromMessage = useChatStore(state => state.updateConversationFromMessage);
 
+  // Prevents two sync processes running at the same time (e.g., rapid reconnects)
+  const isSyncingRef = useRef(false);
+
+  // ── Realtime subscriptions ─────────────────────────────────────────────
   useEffect(() => {
     if (!isConnected || !user) return;
 
@@ -99,39 +138,104 @@ const useChatSocket = () => {
     };
   }, [isConnected, user, viewingConversationId, addMessage, confirmMessage, updateConversationFromMessage, updateMessageStatus, wsService]);
 
+  // ── Sync missed messages after reconnect ──────────────────────────────
+  useEffect(() => {
+    // connectCount=0: not yet connected
+    // connectCount=1: first connect → no sync needed (normal page load)
+    // connectCount=2+: reconnect after disconnect → sync missed messages
+    if (connectCount <= 1) return;
+    if (!user || !isConnected) return;
+
+    if (isSyncingRef.current) {
+      console.log('[SyncMessages] Sync already in progress, skipping this reconnect.');
+      return;
+    }
+
+    const runSync = async () => {
+      isSyncingRef.current = true;
+      console.log(`[SyncMessages] Starting sync after reconnect (connectCount=${connectCount})`);
+
+      try {
+        const missedMessages = await fetchAllMissedMessages();
+        console.log(`[SyncMessages] Fetched ${missedMessages.length} missed message(s).`);
+
+        if (missedMessages.length === 0) return;
+
+        // Read viewingConversationId from store directly — avoids stale closure
+        const currentViewingId = useChatStore.getState().viewingConversationId;
+
+        // Group messages by conversationId for efficient batch processing
+        const byConversation = new Map();
+        for (const msg of missedMessages) {
+          const cid = msg.conversationId;
+          if (!byConversation.has(cid)) byConversation.set(cid, []);
+          byConversation.get(cid).push(msg);
+        }
+
+        for (const [conversationId, msgs] of byConversation) {
+          const isViewing = currentViewingId === conversationId;
+
+          for (const msg of msgs) {
+            // addMessage has built-in dedup logic:
+            //   skips if message.id already in store,
+            //   OR if non-temp message with same clientMessageId already exists.
+            // This handles the race condition where WebSocket also delivered the same message.
+            addMessage(conversationId, { ...msg, status: 'delivered' });
+
+            // Update conversation list preview; increment unread only for background convos
+            updateConversationFromMessage(conversationId, msg, {
+              unreadDelta: isViewing ? 0 : 1,
+              resetUnread: isViewing,
+            });
+
+            // Send delivered acknowledgement — only for messages from OTHER users
+            if (msg.senderId !== user.id) {
+              wsService.send('/app/chat.delivered', { messageId: msg.id });
+            }
+          }
+
+          // If user is currently viewing this conversation, also mark it as seen
+          if (isViewing) {
+            wsService.send('/app/chat.seenConversation', { conversationId });
+            useChatStore.getState().markConversationSeen(conversationId);
+          }
+        }
+      } catch (err) {
+        console.error('[SyncMessages] Sync failed:', err);
+        // Safe failure: WebSocket stays connected, UI is intact, next reconnect will retry
+      } finally {
+        isSyncingRef.current = false;
+      }
+    };
+
+    runSync();
+    // Only re-run when connectCount changes (= new reconnect happened)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectCount]);
+
+  // ── Chat actions ───────────────────────────────────────────────────────
+
   const sendMessage = (conversationId, content, clientMessageId, replyToMessageId = null, uploadIds = []) => {
     if (!isConnected) return false;
-
-    wsService.send('/app/chat.send', {
-      conversationId,
-      content,
-      clientMessageId,
-      replyToMessageId,
-      uploadIds
-    });
+    wsService.send('/app/chat.send', { conversationId, content, clientMessageId, replyToMessageId, uploadIds });
     return true;
   };
 
   const markAsSeen = (messageId) => {
-    if (isConnected) {
-      wsService.send('/app/chat.seen', { messageId });
-    }
+    if (isConnected) wsService.send('/app/chat.seen', { messageId });
   };
 
   const markConversationAsSeen = (conversationId) => {
-    if (isConnected) {
-      wsService.send('/app/chat.seenConversation', { conversationId });
-    }
+    if (isConnected) wsService.send('/app/chat.seenConversation', { conversationId });
   };
 
   const editMessage = (messageId, content) => wsService.send('/app/chat.edit', { messageId, content });
   const recallMessage = (messageId) => wsService.send('/app/chat.recall', { messageId });
   const deleteMessageForMe = (messageId) => wsService.send('/app/chat.deleteForMe', { messageId });
   const reactToMessage = (messageId, type) => wsService.send('/app/chat.react', { messageId, type });
+
   const setTyping = useCallback((conversationId, typing) => {
-    if (isConnected) {
-      wsService.send('/app/chat.typing', { conversationId, typing });
-    }
+    if (isConnected) wsService.send('/app/chat.typing', { conversationId, typing });
   }, [isConnected, wsService]);
 
   return { isConnected, sendMessage, markAsSeen, markConversationAsSeen, editMessage, recallMessage, deleteMessageForMe, reactToMessage, setTyping };
