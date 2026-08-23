@@ -10,9 +10,15 @@ import java.time.LocalDateTime;
 @Table(
         name = "posts",
         indexes = {
+
                 @Index(
                         name = "idx_posts_author_created_at",
                         columnList = "author_id, created_at"
+                ),
+
+                @Index(
+                        name = "idx_posts_shared_post",
+                        columnList = "shared_post_id"
                 )
         }
 )
@@ -30,7 +36,6 @@ public class Post {
 
     @Column(
             name = "content",
-            nullable = false,
             length = 5000
     )
     private String content;
@@ -61,6 +66,9 @@ public class Post {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "deleted_by")
     private User deletedBy;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shared_post_id")
+    private Post sharedPost;
 
     @PrePersist
     public void prePersist() {

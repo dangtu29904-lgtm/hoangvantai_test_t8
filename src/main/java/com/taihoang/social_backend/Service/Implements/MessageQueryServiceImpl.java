@@ -1,9 +1,6 @@
 package com.taihoang.social_backend.Service.Implements;
 
-import com.taihoang.social_backend.Entity.ChatUpload;
-import com.taihoang.social_backend.Entity.MessageAttachment;
-import com.taihoang.social_backend.Entity.MessageReaction;
-import com.taihoang.social_backend.Entity.Messenger;
+import com.taihoang.social_backend.Entity.*;
 import com.taihoang.social_backend.Repository.ConversationMemberRepository;
 import com.taihoang.social_backend.Repository.MessageAttachmentRepository;
 import com.taihoang.social_backend.Repository.MessageReactionRepository;
@@ -291,6 +288,9 @@ public class MessageQueryServiceImpl implements MessageQueryService {
                         .getId(),
                 messenger.getClientMessageId(),
                 messenger.getSequenceNumber(),
+                normalizeMessageType(
+                        messenger
+                ),
                 messenger
                         .getUser()
                         .getId(),
@@ -375,5 +375,13 @@ public class MessageQueryServiceImpl implements MessageQueryService {
                                                 .getId()
                         )
                 );
+    }
+    private MessageType normalizeMessageType(
+            Messenger messenger
+    ) {
+
+        return messenger.getMessageType() == null
+                ? MessageType.USER
+                : messenger.getMessageType();
     }
 }

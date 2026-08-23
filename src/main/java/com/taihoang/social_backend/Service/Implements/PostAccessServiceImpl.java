@@ -21,7 +21,6 @@ public class PostAccessServiceImpl
             Post post
     ) {
 
-        // Post đã bị xóa mềm
         if (post.isDeleted()) {
 
             throw new IllegalArgumentException(
@@ -29,51 +28,15 @@ public class PostAccessServiceImpl
             );
         }
 
-        Long authorId =
-                post.getAuthor().getId();
 
-        // Chính chủ luôn xem được bài của mình
-        if (authorId.equals(currentUserId)) {
-            return;
-        }
+        if (!canView(
+                currentUserId,
+                post
+        )) {
 
-        switch (post.getPrivacy()) {
-
-            case PUBLIC -> {
-                return;
-            }
-
-            case ONLY_ME -> throw
-                    new PostAccessDeniedException(
-                            "Ban khong co quyen xem bai viet nay"
-                    );
-
-            case FRIENDS -> {
-
-                String pairKey =
-                        buildPairKey(
-                                currentUserId,
-                                authorId
-                        );
-
-                boolean isFriend =
-                        friendshipRepository
-                                .findByPairKey(pairKey)
-                                .map(friendship ->
-                                        friendship.getStatus()
-                                                == Friendship
-                                                .FriendshipStatus
-                                                .ACCEPTED
-                                )
-                                .orElse(false);
-
-                if (!isFriend) {
-
-                    throw new PostAccessDeniedException(
-                            "Ban khong co quyen xem bai viet nay"
-                    );
-                }
-            }
+            throw new PostAccessDeniedException(
+                    "Ban khong co quyen xem bai viet nay"
+            );
         }
     }
 
@@ -89,5 +52,70 @@ public class PostAccessServiceImpl
                 Math.max(userId1, userId2);
 
         return min + ":" + max;
+    }
+    @Override
+    public boolean canView(
+            Long currentUserId,
+            Post post
+    ) {
+
+        if (post == null
+                || post.isDeleted()) {
+
+            return false;
+        }
+
+
+        Long authorId =
+                post.getAuthor().getId();
+
+
+        // Chính chủ
+        if (authorId.equals(
+                currentUserId
+        )) {
+
+            return true;
+        }
+
+
+        return switch (
+                post.getPrivacy()
+                ) {
+
+            case PUBLIC ->
+                    true;
+
+
+            case ONLY_ME ->
+                    false;
+
+
+            case FRIENDS -> {
+
+                String pairKey =
+                        buildPairKey(
+                                currentUserId,
+                                authorId
+                        );
+
+
+                boolean isFriend =
+                        friendshipRepository
+                                .findByPairKey(
+                                        pairKey
+                                )
+                                .map(friendship ->
+                                        friendship.getStatus()
+                                                == Friendship
+                                                .FriendshipStatus
+                                                .ACCEPTED
+                                )
+                                .orElse(false);
+
+
+                yield isFriend;
+            }
+        };
     }
 }

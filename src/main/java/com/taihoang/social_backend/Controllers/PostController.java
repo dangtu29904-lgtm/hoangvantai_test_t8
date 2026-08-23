@@ -1,10 +1,9 @@
 package com.taihoang.social_backend.Controllers;
 
+import com.taihoang.social_backend.Service.HiddenPostService;
 import com.taihoang.social_backend.Service.PostService;
-import com.taihoang.social_backend.dto.CreatePostRequest;
-import com.taihoang.social_backend.dto.PostListResponse;
-import com.taihoang.social_backend.dto.PostResponse;
-import com.taihoang.social_backend.dto.UpdatePostRequest;
+import com.taihoang.social_backend.Service.SavedPostService;
+import com.taihoang.social_backend.dto.*;
 import com.taihoang.social_backend.exception.PostAccessDeniedException;
 import com.taihoang.social_backend.security.AuthenticatedUserDetails;
 import jakarta.validation.Valid;
@@ -20,7 +19,8 @@ import org.springframework.web.server.ResponseStatusException;
 public class PostController {
 
     private final PostService postService;
-
+    private final SavedPostService savedPostService ;
+    private final HiddenPostService hiddenPostService;
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public PostResponse createPost(
@@ -58,7 +58,7 @@ public class PostController {
         }
     }
     @GetMapping("/{postId}")
-    public PostResponse getPost(
+    public PostDetailResponse getPost(
 
             @AuthenticationPrincipal
             AuthenticatedUserDetails currentUser,
@@ -218,5 +218,237 @@ public class PostController {
                     exception
             );
         }
+    }
+    @PostMapping("/{postId}/save")
+    public SavedPostResponse savePost(
+
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+
+            @PathVariable
+            Long postId
+    ) {
+
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+
+
+        try {
+
+            return savedPostService.savePost(
+                    currentUser.getId(),
+                    postId
+            );
+
+        } catch (PostAccessDeniedException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    exception.getMessage(),
+                    exception
+            );
+
+        } catch (IllegalArgumentException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+    @DeleteMapping("/{postId}/save")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unsavePost(
+
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+
+            @PathVariable
+            Long postId
+    ) {
+
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+
+
+        savedPostService.unsavePost(
+                currentUser.getId(),
+                postId
+        );
+    }
+    @GetMapping("/saved")
+    public SavedPostListResponse getSavedPosts(
+
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+
+            @RequestParam(
+                    defaultValue = "0"
+            )
+            int page,
+
+            @RequestParam(
+                    defaultValue = "20"
+            )
+            int limit
+    ) {
+
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+
+
+        try {
+
+            return savedPostService
+                    .getSavedPosts(
+                            currentUser.getId(),
+                            page,
+                            limit
+                    );
+
+        } catch (IllegalArgumentException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+    @PostMapping("/{postId}/share")
+    @ResponseStatus(HttpStatus.CREATED)
+    public SharePostResponse sharePost(
+
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+
+            @PathVariable
+            Long postId,
+
+            @Valid
+            @RequestBody
+            SharePostRequest request
+    ) {
+
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+
+
+        try {
+
+            return postService.sharePost(
+
+                    currentUser.getId(),
+
+                    postId,
+
+                    request
+            );
+
+        } catch (PostAccessDeniedException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    exception.getMessage(),
+                    exception
+            );
+
+        } catch (IllegalArgumentException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+
+    @PostMapping("/{postId}/hide")
+    public HidePostResponse hidePost(
+
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+
+            @PathVariable
+            Long postId
+    ) {
+
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+
+        try {
+
+            return hiddenPostService.hidePost(
+                    currentUser.getId(),
+                    postId
+            );
+
+        } catch (PostAccessDeniedException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    exception.getMessage(),
+                    exception
+            );
+
+        } catch (IllegalArgumentException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+
+    @DeleteMapping("/{postId}/hide")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unhidePost(
+
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+
+            @PathVariable
+            Long postId
+    ) {
+
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+
+        hiddenPostService.unhidePost(
+                currentUser.getId(),
+                postId
+        );
     }
 }

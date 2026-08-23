@@ -57,6 +57,14 @@ public class Notification {
     @Column(name = "reference_id")
     private Long referenceId;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "post_id")
+    private Post post;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "comment_id")
+    private PostComment comment;
+
     @Column(
             name = "is_read",
             nullable = false
@@ -68,6 +76,9 @@ public class Notification {
             nullable = false
     )
     private LocalDateTime createdAt;
+
+    @Column(name = "read_at")
+    private LocalDateTime readAt;
 
     @PrePersist
     public void prePersist() {
@@ -87,6 +98,14 @@ public class Notification {
 
         POST_COMMENT,
 
-        NEW_MESSAGE
+        NEW_MESSAGE,
+        
+        POST_REACTION,
+        
+        COMMENT_REPLY,
+        
+        POST_SHARE,
+        
+        POST_MENTION
     }
 }

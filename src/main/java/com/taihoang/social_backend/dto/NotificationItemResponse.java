@@ -18,11 +18,17 @@ public record NotificationItemResponse(
 
         Long referenceId,
 
+        Long postId,
+
+        Long commentId,
+
         String message,
 
         boolean read,
 
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+
+        LocalDateTime readAt
 
 ) {
 }

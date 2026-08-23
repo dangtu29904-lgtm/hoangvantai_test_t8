@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class NotificationServiceImpl implements NotificationService {
     private final NotificationRepository notificationRepository;
+    private final com.taihoang.social_backend.Repository.UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
     @Override
     public NotificationListResponse getNotifications(
@@ -92,12 +93,18 @@ public class NotificationServiceImpl implements NotificationService {
                 notification.getActor().getAvatarUrl(),
 
                 notification.getReferenceId(),
+                
+                notification.getPost() != null ? notification.getPost().getId() : null,
+                
+                notification.getComment() != null ? notification.getComment().getId() : null,
 
                 buildMessage(notification),
 
                 notification.isRead(),
 
-                notification.getCreatedAt()
+                notification.getCreatedAt(),
+                
+                notification.getReadAt()
         );
     }
 
@@ -124,11 +131,27 @@ public class NotificationServiceImpl implements NotificationService {
 
             case POST_COMMENT ->
                     actorName
-                            + " da binh luan bai viet cua ban";
+                            + " da binh luan ve bai viet cua ban";
 
             case NEW_MESSAGE ->
                     actorName
                             + " da gui cho ban mot tin nhan";
+                            
+            case POST_REACTION ->
+                    actorName 
+                            + " da bay to cam xuc ve bai viet cua ban";
+                            
+            case COMMENT_REPLY ->
+                    actorName 
+                            + " da tra loi binh luan cua ban";
+                            
+            case POST_SHARE ->
+                    actorName 
+                            + " da chia se bai viet cua ban";
+                            
+            case POST_MENTION ->
+                    actorName 
+                            + " da nhac den ban trong mot bai viet";
         };
     }
     @Override
@@ -208,8 +231,15 @@ public class NotificationServiceImpl implements NotificationService {
         if (!notification.isRead()) {
 
             notification.setRead(true);
+            notification.setReadAt(java.time.LocalDateTime.now());
 
             notificationRepository.save(notification);
+            
+            eventPublisher.publishEvent(
+                    new NotificationUnreadCountEvent(
+                            notification.getReceiver().getEmail()
+                    )
+            );
         }
 
         return new NotificationReadResponse(
@@ -233,6 +263,16 @@ public class NotificationServiceImpl implements NotificationService {
                 notificationRepository.markAllAsRead(
                         currentUserId
                 );
+                
+        if (updatedCount > 0) {
+            userRepository.findById(currentUserId).ifPresent(user -> {
+                eventPublisher.publishEvent(
+                        new NotificationUnreadCountEvent(
+                                user.getEmail()
+                        )
+                );
+            });
+        }
 
         return new NotificationReadAllResponse(
                 updatedCount
@@ -298,5 +338,112 @@ public class NotificationServiceImpl implements NotificationService {
         );
 
         return response;
+    }
+    
+    private void saveAndPublishNotification(Notification notification) {
+        Notification saved = notificationRepository.save(notification);
+        NotificationItemResponse response = toResponse(saved);
+        eventPublisher.publishEvent(
+                new NotificationRealtimeEvent(
+                        notification.getReceiver().getEmail(),
+                        response
+                )
+        );
+    }
+    
+    @Override
+    @Transactional
+    public void notifyPostReaction(User actor, com.taihoang.social_backend.Entity.Post post) {
+        if (actor.getId().equals(post.getAuthor().getId())) {
+            return;
+        }
+        // Deduplicate reaction (only 1 POST_REACTION per actor and post)
+        notificationRepository.findByReceiver_IdAndActor_IdAndTypeAndPost_Id(
+                post.getAuthor().getId(),
+                actor.getId(),
+                Notification.NotificationType.POST_REACTION,
+                post.getId()
+        ).ifPresentOrElse(
+            existing -> {
+                // If it already exists, you may choose to update the timestamp or leave it. We leave it to avoid spam.
+            },
+            () -> {
+                Notification notification = new Notification();
+                notification.setReceiver(post.getAuthor());
+                notification.setActor(actor);
+                notification.setType(Notification.NotificationType.POST_REACTION);
+                notification.setPost(post);
+                notification.setRead(false);
+                saveAndPublishNotification(notification);
+            }
+        );
+    }
+    
+    @Override
+    @Transactional
+    public void notifyPostComment(User actor, com.taihoang.social_backend.Entity.Post post, com.taihoang.social_backend.Entity.PostComment comment) {
+        if (actor.getId().equals(post.getAuthor().getId())) {
+            return;
+        }
+        
+        Notification notification = new Notification();
+        notification.setReceiver(post.getAuthor());
+        notification.setActor(actor);
+        notification.setType(Notification.NotificationType.POST_COMMENT);
+        notification.setPost(post);
+        notification.setComment(comment);
+        notification.setRead(false);
+        saveAndPublishNotification(notification);
+    }
+    
+    @Override
+    @Transactional
+    public void notifyCommentReply(User actor, com.taihoang.social_backend.Entity.Post post, com.taihoang.social_backend.Entity.PostComment reply, User parentCommentAuthor) {
+        if (actor.getId().equals(parentCommentAuthor.getId())) {
+            return;
+        }
+        
+        Notification notification = new Notification();
+        notification.setReceiver(parentCommentAuthor);
+        notification.setActor(actor);
+        notification.setType(Notification.NotificationType.COMMENT_REPLY);
+        notification.setPost(post);
+        notification.setComment(reply);
+        notification.setRead(false);
+        saveAndPublishNotification(notification);
+    }
+    
+    @Override
+    @Transactional
+    public void notifyPostShare(User actor, com.taihoang.social_backend.Entity.Post originalPost, com.taihoang.social_backend.Entity.Post sharedPost) {
+        if (actor.getId().equals(originalPost.getAuthor().getId())) {
+            return;
+        }
+        
+        Notification notification = new Notification();
+        notification.setReceiver(originalPost.getAuthor());
+        notification.setActor(actor);
+        notification.setType(Notification.NotificationType.POST_SHARE);
+        // post is the original post so clicking it goes to the original post (or sharedPost depending on UX, we use sharedPost as the context and reference the original)
+        // Usually, the notification says "X shared your post", clicking it might go to the shared post or original. Let's use sharedPost.
+        notification.setPost(sharedPost);
+        notification.setRead(false);
+        saveAndPublishNotification(notification);
+    }
+    
+    @Override
+    @Transactional
+    public void notifyPostMention(User actor, com.taihoang.social_backend.Entity.Post post, User mentionedUser) {
+        if (actor.getId().equals(mentionedUser.getId())) {
+            return;
+        }
+        
+        Notification notification = new Notification();
+        notification.setReceiver(mentionedUser);
+        notification.setActor(actor);
+        notification.setType(Notification.NotificationType.POST_MENTION);
+        notification.setPost(post);
+        notification.setRead(false);
+        saveAndPublishNotification(notification);
     }
 }

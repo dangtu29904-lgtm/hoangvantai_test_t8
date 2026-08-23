@@ -22,7 +22,8 @@ public class Conversations {
     private String name;
     @Column(name = "create_at")
     private LocalDate createAt ;
-
+    @Column(name = "avatar_url", length = 1000)
+    private String avatarUrl;
     @OneToMany(mappedBy = "conversation")
     private List<Conversation_Member> conversationMembers ;
 

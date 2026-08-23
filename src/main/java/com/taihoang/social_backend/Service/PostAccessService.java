@@ -7,4 +7,8 @@ public interface PostAccessService {
             Long currentUserId,
             Post post
     );
+    boolean canView(
+            Long currentUserId,
+            Post post
+    );
 }

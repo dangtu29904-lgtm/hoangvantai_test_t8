@@ -2,6 +2,7 @@ package com.taihoang.social_backend.Service.Implements;
 
 import com.taihoang.social_backend.Entity.Conversation_Member;
 import com.taihoang.social_backend.Entity.Conversations;
+import com.taihoang.social_backend.Entity.MessageType;
 import com.taihoang.social_backend.Entity.Messenger;
 import com.taihoang.social_backend.Repository.ConversationMemberRepository;
 import com.taihoang.social_backend.Repository.ConversationRepository;
@@ -264,6 +265,9 @@ public class ConversationQueryServiceIMPL implements ConversationQueryService {
         }
         return new LastMessageResponse(
                 messenger.getId(),
+                normalizeMessageType(
+                        messenger
+                ),
                 messenger.getContent(),
                 messenger.getUser().getId(),
                 messenger.getUser().getUserName(),
@@ -350,4 +354,13 @@ public class ConversationQueryServiceIMPL implements ConversationQueryService {
             Map<Long, Long> unreadCounts
     ) {
     }
+    private MessageType normalizeMessageType(
+            Messenger messenger
+    ) {
+
+        return messenger.getMessageType() == null
+                ? MessageType.USER
+                : messenger.getMessageType();
+    }
+
 }

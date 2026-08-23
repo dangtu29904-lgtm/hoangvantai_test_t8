@@ -30,4 +30,7 @@ public interface PostCommentRepository
             @Param("commentId")
             Long commentId
     );
+    long countByPost_IdAndDeletedFalse(
+            Long postId
+    );
 }

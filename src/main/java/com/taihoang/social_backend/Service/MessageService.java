@@ -7,18 +7,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import com.taihoang.social_backend.Entity.*;
 import org.springframework.stereotype.Service;
 
-import com.taihoang.social_backend.Entity.ChatUpload;
-import com.taihoang.social_backend.Entity.Conversations;
-import com.taihoang.social_backend.Entity.MessageAttachment;
-import com.taihoang.social_backend.Entity.MessageReaction;
-import com.taihoang.social_backend.Entity.MessageReactionAction;
-import com.taihoang.social_backend.Entity.MessageUserState;
-import com.taihoang.social_backend.Entity.Messenger;
-import com.taihoang.social_backend.Entity.MessengerStatus;
-import com.taihoang.social_backend.Entity.ReactionType;
-import com.taihoang.social_backend.Entity.User;
 import com.taihoang.social_backend.Repository.ChatUploadRepository;
 import com.taihoang.social_backend.Repository.ConversationMemberRepository;
 import com.taihoang.social_backend.Repository.ConversationRepository;
@@ -248,6 +239,15 @@ public class MessageService {
                                         "Khong tim thay tin nhan"
                                 )
                         );
+
+        // kiem tra xem kieu message la gi : tin nhan hay la thong bao
+        if (normalizeMessageType(messenger)
+                != MessageType.USER) {
+
+            throw new IllegalArgumentException(
+                    "Khong the sua system message"
+            );
+        }
         // ============================
         // CHI NGUOI GUI MOI DUOC SUA
         // ============================
@@ -329,6 +329,13 @@ public class MessageService {
                         conversation,
                         request.replyToMessageId()
                 );
+        if (normalizeMessageType(replyToMessage)
+                != MessageType.USER) {
+
+            throw new IllegalArgumentException(
+                    "Khong the reply system message"
+            );
+        }
 
 
         // ======================================
@@ -459,6 +466,13 @@ public class MessageService {
                                         "Tin nhan duoc reply khong ton tai"
                                 )
                         );
+        if (normalizeMessageType(replyToMessage)
+                != MessageType.USER) {
+
+            throw new IllegalArgumentException(
+                    "Khong the reply system message"
+            );
+        }
 
         if (!replyToMessage
                 .getConversation()
@@ -478,6 +492,13 @@ public class MessageService {
         ReplyMessageResponse replyResponse = null;
         Messenger replyToMessage =
                 messenger.getReplyToMessage();
+        if (normalizeMessageType(replyToMessage)
+                != MessageType.USER) {
+
+            throw new IllegalArgumentException(
+                    "Khong the reply system message"
+            );
+        }
         if (replyToMessage != null) {
             boolean recalled =
                     replyToMessage.getRecalledAt() != null;
@@ -518,6 +539,7 @@ public class MessageService {
                             attachments
                     );
         }
+
         return new MessageResponse(
 
                 messenger.getId(),
@@ -529,7 +551,7 @@ public class MessageService {
                 messenger.getClientMessageId(),
 
                 messenger.getSequenceNumber(),
-
+                normalizeMessageType(messenger),
                 messenger
                         .getUser()
                         .getId(),
@@ -566,6 +588,13 @@ public class MessageService {
                                         "Khong tim thay tin nhan"
                                 )
                         );
+        if (normalizeMessageType(messenger)
+                != MessageType.USER) {
+
+            throw new IllegalArgumentException(
+                    "Khong the thu hoi system message"
+            );
+        }
         // =================================
         // CHI SENDER MOI DUOC THU HOI
         // =================================
@@ -715,6 +744,13 @@ public class MessageService {
                                         "Khong tim thay tin nhan"
                                 )
                         );
+        if (normalizeMessageType(messenger)
+                != MessageType.USER) {
+
+            throw new IllegalArgumentException(
+                    "Khong the reaction system message"
+            );
+        }
         Long conversationId =
                 messenger
                         .getConversation()
@@ -1148,5 +1184,13 @@ public class MessageService {
                 response,
                 recipientDestinations
         );
+    }
+    private MessageType normalizeMessageType(
+            Messenger messenger
+    ) {
+
+        return messenger.getMessageType() == null
+                ? MessageType.USER
+                : messenger.getMessageType();
     }
 }

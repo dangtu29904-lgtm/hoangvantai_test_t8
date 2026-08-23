@@ -86,6 +86,12 @@ public interface PostRepository
                 )
             )
       )
+      and not exists (
+            select hp.id
+            from HiddenPost hp
+            where hp.user.id = :currentUserId
+              and hp.post.id = p.id
+      )
     order by p.createdAt desc, p.id desc
 """)
     Page<Post> findFeed(
@@ -93,5 +99,8 @@ public interface PostRepository
             Long currentUserId,
 
             Pageable pageable
+    );
+    long countBySharedPost_IdAndDeletedFalse(
+            Long postId
     );
 }

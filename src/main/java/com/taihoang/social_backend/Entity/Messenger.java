@@ -42,4 +42,7 @@ public class Messenger {
     private LocalDateTime editedAt;
     @Column(name = "recalled_at", columnDefinition = "datetime(6)")
     private LocalDateTime recalledAt;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "message_type")
+    private MessageType messageType = MessageType.USER;
 }

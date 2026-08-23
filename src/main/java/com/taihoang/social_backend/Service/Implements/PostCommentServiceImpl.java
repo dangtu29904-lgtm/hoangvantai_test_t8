@@ -36,6 +36,8 @@ public class PostCommentServiceImpl
 
     private final FriendshipRepository
             friendshipRepository;
+            
+    private final com.taihoang.social_backend.Service.NotificationService notificationService;
 
     @Override
     @Transactional
@@ -85,6 +87,8 @@ public class PostCommentServiceImpl
 
         PostComment saved =
                 postCommentRepository.save(comment);
+                
+        notificationService.notifyPostComment(author, post, saved);
 
         return toCommentResponse(saved);
     }
@@ -398,6 +402,8 @@ public class PostCommentServiceImpl
 
         PostComment saved =
                 postCommentRepository.save(reply);
+                
+        notificationService.notifyCommentReply(author, post, saved, parentComment.getAuthor());
 
         return toCommentResponse(saved);
     }

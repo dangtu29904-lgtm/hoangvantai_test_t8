@@ -278,6 +278,9 @@ public class ChatSyncServiceImpl implements ChatSyncService {
                         .getId(),
                 messenger.getClientMessageId(),
                 messenger.getSequenceNumber(),
+                normalizeMessageType(
+                        messenger
+                ),
                 messenger
                         .getUser()
                         .getId(),
@@ -292,5 +295,13 @@ public class ChatSyncServiceImpl implements ChatSyncService {
                 reactionResponses,
                 attachmentResponses
         );
+    }
+    private MessageType normalizeMessageType(
+            Messenger messenger
+    ) {
+
+        return messenger.getMessageType() == null
+                ? MessageType.USER
+                : messenger.getMessageType();
     }
 }

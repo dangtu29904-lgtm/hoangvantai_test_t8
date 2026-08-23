@@ -158,4 +158,208 @@ public class ConversationController {
             );
         }
     }
+    @PostMapping("/{conversationId}/members")
+    public ResponseEntity<GroupConversationResponse>
+    addGroupMembers(
+
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+
+            @PathVariable
+            Long conversationId,
+
+            @Valid
+            @RequestBody
+            AddGroupMembersRequest request
+    ) {
+
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+
+        try {
+
+            GroupConversationResponse response =
+                    conversationCommandService
+                            .addGroupMembers(
+                                    currentUser.getId(),
+                                    conversationId,
+                                    request.memberIds()
+                            );
+
+            return ResponseEntity
+                    .status(HttpStatus.CREATED)
+                    .body(response);
+
+        } catch (IllegalArgumentException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+    @DeleteMapping("/{conversationId}/members/{memberId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removeGroupMember(
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+            @PathVariable
+            Long conversationId,
+            @PathVariable
+            Long memberId
+    ) {
+        if (currentUser == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+        try {
+            conversationCommandService
+                    .removeGroupMember(
+                            currentUser.getId(),
+                            conversationId,
+                            memberId
+                    );
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+    @DeleteMapping("/{conversationId}/members/me")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void leaveGroup(
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+            @PathVariable
+            Long conversationId
+    ) {
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+        try {
+            conversationCommandService
+                    .leaveGroup(
+                            currentUser.getId(),
+                            conversationId
+                    );
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+    @PatchMapping("/{conversationId}/name")
+    public GroupConversationResponse updateGroupName(
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+            @PathVariable
+            Long conversationId,
+            @Valid
+            @RequestBody
+            UpdateGroupNameRequest request
+    ) {
+        if (currentUser == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+        try {
+            return conversationCommandService
+                    .updateGroupName(
+                            currentUser.getId(),
+                            conversationId,
+                            request.name()
+                    );
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+    @PatchMapping(
+            "/{conversationId}/members/{memberId}/role"
+    )
+    public GroupMemberResponse updateGroupMemberRole(
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+            @PathVariable
+            Long conversationId,
+            @PathVariable
+            Long memberId,
+            @Valid
+            @RequestBody
+            UpdateGroupMemberRoleRequest request
+    ) {
+        if (currentUser == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+        try {
+            return conversationCommandService
+                    .updateGroupMemberRole(
+                            currentUser.getId(),
+                            conversationId,
+                            memberId,
+                            request.role()
+                    );
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+    @PatchMapping("/{conversationId}/avatar")
+    public GroupAvatarResponse updateGroupAvatar(
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+            @PathVariable
+            Long conversationId,
+            @Valid
+            @RequestBody
+            UpdateGroupAvatarRequest request
+    ) {
+        if (currentUser == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+        try {
+            return conversationCommandService
+                    .updateGroupAvatar(
+                            currentUser.getId(),
+                            conversationId,
+                            request.uploadId()
+                    );
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
 }

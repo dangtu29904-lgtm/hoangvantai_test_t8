@@ -24,7 +24,8 @@ public interface NotificationRepository
     @Modifying
     @Query("""
        update Notification n
-       set n.read = true
+       set n.read = true,
+           n.readAt = current_timestamp
        where n.receiver.id = :receiverId
          and n.read = false
        """)
@@ -33,5 +34,12 @@ public interface NotificationRepository
     );
     long countByReceiver_IdAndReadFalse(
             Long receiverId
+    );
+    
+    Optional<Notification> findByReceiver_IdAndActor_IdAndTypeAndPost_Id(
+            Long receiverId,
+            Long actorId,
+            Notification.NotificationType type,
+            Long postId
     );
 }

@@ -80,9 +80,16 @@ public class ConversationDetailServiceImpl implements ConversationDetailService 
         return new ConversationDetailResponse(
                 conversation.getId(),
                 conversation.getType(),
-                resolveConversationName(conversation, members, currentUserId),
+                resolveConversationName(
+                        conversation,
+                        members,
+                        currentUserId
+                ),
+                conversation.getAvatarUrl(),
                 conversation.getCreateAt(),
-                normalizeRole(currentMembership.getMemberRole()),
+                normalizeRole(
+                        currentMembership.getMemberRole()
+                ),
                 members.stream()
                         .map(this::toMemberResponse)
                         .toList()

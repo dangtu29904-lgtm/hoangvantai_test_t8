@@ -3,6 +3,7 @@ package com.taihoang.social_backend.dto;
 import com.taihoang.social_backend.Entity.PostPrivacy;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record PostResponse(
 
@@ -18,8 +19,17 @@ public record PostResponse(
 
         PostPrivacy privacy,
 
+        List<PostMediaResponse> media,
+
+        List<MentionedUserResponse> mentions,
+
+        long shareCount,
+
+        OriginalPostResponse originalPost,
+
         LocalDateTime createdAt,
 
         LocalDateTime updatedAt
+
 ) {
 }

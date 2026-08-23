@@ -25,6 +25,7 @@ public class PostReactionServiceImpl implements PostReactionService {
     private final PostRepository postRepository ;
     private final UserRepository userRepository ;
     private final FriendshipRepository friendshipRepository ;
+    private final com.taihoang.social_backend.Service.NotificationService notificationService;
     @Override
     @Transactional
     public ReactionResponse reactToPost(
@@ -75,6 +76,8 @@ public class PostReactionServiceImpl implements PostReactionService {
 
         PostReaction saved =
                 postReactionRepository.save(reaction);
+
+        notificationService.notifyPostReaction(user, post);
 
         return toReactionResponse(saved);
     }

@@ -10,6 +10,7 @@ public record ConversationDetailResponse(
         Long id,
         Conversations.type_chat type,
         String name,
+        String avatarUrl ,
         LocalDate createdAt,
         Conversation_Member.MemberRole currentUserRole,
         List<ConversationDetailMemberResponse> members
