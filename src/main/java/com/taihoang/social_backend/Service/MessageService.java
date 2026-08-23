@@ -329,13 +329,13 @@ public class MessageService {
                         conversation,
                         request.replyToMessageId()
                 );
-        if (normalizeMessageType(replyToMessage)
-                != MessageType.USER) {
-
-            throw new IllegalArgumentException(
-                    "Khong the reply system message"
-            );
-        }
+//        if (normalizeMessageType(replyToMessage)
+//                != MessageType.USER) {
+//
+//            throw new IllegalArgumentException(
+//                    "Khong the reply system message"
+//            );
+//        }
 
 
         // ======================================
@@ -490,34 +490,37 @@ public class MessageService {
             List<MessageAttachment> attachments
     ) {
         ReplyMessageResponse replyResponse = null;
+
         Messenger replyToMessage =
                 messenger.getReplyToMessage();
-        if (normalizeMessageType(replyToMessage)
-                != MessageType.USER) {
 
-            throw new IllegalArgumentException(
-                    "Khong the reply system message"
-            );
-        }
         if (replyToMessage != null) {
+
+            if (normalizeMessageType(replyToMessage)
+                    != MessageType.USER) {
+
+                throw new IllegalArgumentException(
+                        "Khong the reply system message"
+                );
+            }
+
             boolean recalled =
                     replyToMessage.getRecalledAt() != null;
+
             String replyContent =
                     recalled
                             ? null
                             : replyToMessage.getContent();
+
             replyResponse =
                     new ReplyMessageResponse(
                             replyToMessage.getId(),
-                            replyToMessage
-                                    .getUser()
-                                    .getId(),
-                            replyToMessage
-                                    .getUser()
-                                    .getUserName(),
+                            replyToMessage.getUser().getId(),
+                            replyToMessage.getUser().getUserName(),
                             replyContent,
                             recalled
                     );
+
         }
         String visibleContent =
                 messenger.getRecalledAt() != null
