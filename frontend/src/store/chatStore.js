@@ -216,6 +216,14 @@ const useChatStore = create((set, get) => ({
     };
   }),
 
+  hasMessage: (conversationId, message) => {
+    const prevMessages = get().messages[conversationId] || [];
+    return prevMessages.some(m => (
+      (message.id != null && m.id === message.id)
+      || (message.clientMessageId != null && m.clientMessageId === message.clientMessageId && !m.isTemp)
+    ));
+  },
+
   // Used for optimistic update
   addTempMessage: (conversationId, message) => set((state) => {
     const prevMessages = state.messages[conversationId] || [];

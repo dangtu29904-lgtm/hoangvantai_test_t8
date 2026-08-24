@@ -27,6 +27,9 @@ export const WebSocketProvider = ({ children }) => {
           setIsConnected(true);
           setConnectCount(count);
         },
+        // onDisconnect
+        () => setIsConnected(false),
+        // onError
         () => setIsConnected(false)
       );
     } else {

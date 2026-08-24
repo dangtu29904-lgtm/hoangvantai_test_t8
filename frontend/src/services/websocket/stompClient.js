@@ -11,7 +11,7 @@ class WebSocketService {
     this.connectCount = 0;
   }
 
-  connect(token, onConnect, onError) {
+  connect(token, onConnect, onDisconnect, onError) {
     if (this.client && this.client.connected) return;
 
     this.client = new Client({
@@ -39,6 +39,7 @@ class WebSocketService {
       onWebSocketClose: () => {
         console.log('WebSocket closed');
         this._stopPresenceHeartbeat();
+        if (onDisconnect) onDisconnect();
       }
     });
 

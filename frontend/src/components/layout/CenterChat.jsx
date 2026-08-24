@@ -19,6 +19,7 @@ const CenterChat = ({ markConversationAsSeen, sendMessage, editMessage, recallMe
   const typingUserId = useChatStore(state => state.typingUsers[activeConversation?.id]);
   const messages = messagesFromStore || [];
   const setMessages = useChatStore(state => state.setMessages);
+  const appendMessages = useChatStore(state => state.appendMessages);
   const prependMessages = useChatStore(state => state.prependMessages);
   const onlineUsers = useChatStore(state => state.onlineUsers);
   const { user } = useAuth();
@@ -43,21 +44,26 @@ const CenterChat = ({ markConversationAsSeen, sendMessage, editMessage, recallMe
 
     try {
       const data = await chatApi.getMessages(conversationId, beforeSequence, PAGE_SIZE);
-      const normalized = (data.items || []).map(m => ({
-        id: m.id,
-        clientMessageId: m.clientMessageId,
-        conversationId: m.conversationId,
-        senderId: m.senderId,
-        content: m.content,
-        status: 'seen',
-        sentAt: m.sentAt,
-        sequenceNumber: m.sequenceNumber,
-      }));
+      const normalized = (data.items || []).map(m => {
+        // Derive status from what the backend tells us:
+        // - If seenAt is set → someone has seen it → 'seen'
+        // - If message belongs to us, default to 'sent' (WebSocket will push 'delivered'/'seen' updates)
+        // - If message from others, no status icon needed — use 'seen' as placeholder
+        let status;
+        if (m.senderId === user?.id) {
+          status = m.seenAt ? 'seen' : 'sent';
+        } else {
+          status = 'seen'; // recipient viewing history, no sender-side status needed
+        }
+        return { ...m, status };
+      });
 
       if (append) {
         prependMessages(conversationId, normalized);
       } else {
-        setMessages(conversationId, normalized);
+        // Use appendMessages (merge) instead of setMessages (overwrite) so messages
+        // already added by sync are preserved and de-duped, not erased.
+        appendMessages(conversationId, normalized);
       }
 
       setNextBeforeSequence(data.nextBeforeSequence ?? null);
@@ -70,7 +76,7 @@ const CenterChat = ({ markConversationAsSeen, sendMessage, editMessage, recallMe
     } catch (err) {
       console.error('Failed to fetch conversation messages:', err);
     }
-  }, [markConversationAsSeen, prependMessages, setMessages]);
+  }, [markConversationAsSeen, appendMessages, prependMessages, setMessages]);
 
   useEffect(() => {
     if (!activeConversation) return;
