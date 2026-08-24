@@ -292,6 +292,7 @@ public class ChatSyncServiceImpl implements ChatSyncService {
                 replyResponse,
                 messenger.getEditedAt(),
                 messenger.getRecalledAt(),
+                messenger.getSeenAt(),
                 reactionResponses,
                 attachmentResponses,
                 null // storyReference: populated only if message is STORY_REPLY (handled by per-request mapper)

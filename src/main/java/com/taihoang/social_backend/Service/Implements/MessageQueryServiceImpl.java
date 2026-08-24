@@ -302,6 +302,7 @@ public class MessageQueryServiceImpl implements MessageQueryService {
                 replyResponse,
                 messenger.getEditedAt(),
                 messenger.getRecalledAt(),
+                messenger.getSeenAt(),
                 reactionResponses,
                 attachmentResponses,
                 null // storyReference is handled by per-request mapper for Story Reply

@@ -188,6 +188,7 @@ public class StoryReplyServiceImpl implements StoryReplyService {
                 null,       // replyTo — Story Reply does not use replyToMessage
                 m.getEditedAt(),
                 m.getRecalledAt(),
+                m.getSeenAt(),
                 List.of(),  // reactions
                 List.of(),  // attachments
                 visibleStoryRef

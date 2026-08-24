@@ -218,9 +218,11 @@ public class GroupSystemMessageServiceImpl
 
                         null,
 
-                        null,
+                        null, // editedAt
 
-                        null,
+                        null, // recalledAt
+
+                        null, // seenAt
 
                         List.of(),
 

@@ -329,13 +329,9 @@ public class MessageService {
                         conversation,
                         request.replyToMessageId()
                 );
-//        if (normalizeMessageType(replyToMessage)
-//                != MessageType.USER) {
-//
-//            throw new IllegalArgumentException(
-//                    "Khong the reply system message"
-//            );
-//        }
+        if (replyToMessage != null && normalizeMessageType(replyToMessage) != MessageType.USER) {
+            throw new IllegalArgumentException("Khong the reply system message");
+        }
 
 
         // ======================================
@@ -572,6 +568,8 @@ public class MessageService {
                 messenger.getEditedAt(),
 
                 messenger.getRecalledAt(),
+
+                messenger.getSeenAt(),
 
                 List.of(),
 

@@ -31,6 +31,8 @@ public record MessageResponse(
 
         LocalDateTime recalledAt,
 
+        LocalDateTime seenAt,
+
         List<MessageReactionItemResponse> reactions,
 
         List<MessageAttachmentResponse> attachments,
