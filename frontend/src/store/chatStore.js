@@ -43,9 +43,16 @@ const sortConversations = (conversations) =>
     return (b.id ?? 0) - (a.id ?? 0);
   });
 
+const resolveMessageStatus = (message) => {
+  if (message.status) return message.status;
+  if (message.seenAt) return 'seen';
+  if (message.deliveredAt) return 'delivered';
+  return 'sent';
+};
+
 const normalizeMessage = (message) => ({
   ...message,
-  status: message.status ?? 'sent'
+  status: resolveMessageStatus(message)
 });
 
 const sortMessages = (messages) =>
@@ -87,7 +94,34 @@ const useChatStore = create((set, get) => ({
   typingUsers: {},
   
   setConversations: (conversations) => set((state) => {
-    const normalized = sortConversations(conversations.map(normalizeConversation));
+    const merged = conversations.map((conversation) => {
+      const next = normalizeConversation(conversation);
+      const existing = state.conversations.find((item) => item.id === next.id);
+
+      if (!existing) {
+        return state.viewingConversationId === next.id ? { ...next, unread: 0 } : next;
+      }
+
+      const serverUpdatedAt = toTimestamp(next.updatedAt);
+      const localUpdatedAt = toTimestamp(existing.updatedAt);
+      const shouldKeepLocal = localUpdatedAt > serverUpdatedAt;
+      const unread = state.viewingConversationId === next.id || existing.unread === 0
+        ? 0
+        : next.unread;
+
+      return normalizeConversation({
+        ...next,
+        unread,
+        name: shouldKeepLocal && existing.name ? existing.name : next.name,
+        avatar: shouldKeepLocal && existing.avatar ? existing.avatar : next.avatar,
+        lastMessage: shouldKeepLocal && existing.lastMessage ? existing.lastMessage : next.lastMessage,
+        lastMessageId: shouldKeepLocal && existing.lastMessageId ? existing.lastMessageId : next.lastMessageId,
+        otherUserId: existing.otherUserId ?? next.otherUserId,
+        updatedAt: shouldKeepLocal ? existing.updatedAt : next.updatedAt
+      });
+    });
+
+    const normalized = sortConversations(merged);
     const activeConversation = state.activeConversation
       ? normalized.find((conversation) => conversation.id === state.activeConversation.id) ?? state.activeConversation
       : state.activeConversation;
@@ -97,6 +131,45 @@ const useChatStore = create((set, get) => ({
       activeConversation
     };
   }),
+
+  upsertConversation: (conversation) => set((state) => {
+    const next = normalizeConversation(conversation);
+    const existing = state.conversations.find((item) => item.id === next.id);
+    const mergedConversation = existing
+      ? normalizeConversation({
+          ...existing,
+          ...next,
+          unread: state.viewingConversationId === next.id ? 0 : (next.unread ?? existing.unread ?? 0),
+        })
+      : normalizeConversation({
+          ...next,
+          unread: state.viewingConversationId === next.id ? 0 : (next.unread ?? 0)
+        });
+
+    const conversations = sortConversations([
+      ...state.conversations.filter((item) => item.id !== next.id),
+      mergedConversation
+    ]);
+
+    const activeConversation = state.activeConversation?.id === next.id
+      ? mergedConversation
+      : state.activeConversation;
+
+    return {
+      conversations,
+      activeConversation
+    };
+  }),
+
+  removeConversation: (conversationId) => set((state) => ({
+    conversations: state.conversations.filter((conversation) => conversation.id !== conversationId),
+    activeConversation: state.activeConversation?.id === conversationId ? null : state.activeConversation,
+    activeConversationDetail: state.activeConversationDetail?.id === conversationId ? null : state.activeConversationDetail,
+    viewingConversationId: state.viewingConversationId === conversationId ? null : state.viewingConversationId,
+    messages: Object.fromEntries(
+      Object.entries(state.messages).filter(([key]) => Number(key) !== Number(conversationId))
+    )
+  })),
   
   setActiveConversation: (conversation) => set({ activeConversation: conversation }),
 
@@ -128,11 +201,12 @@ const useChatStore = create((set, get) => ({
     } = options;
 
     const existingConversation = state.conversations.find((conversation) => conversation.id === conversationId);
+    const isViewingConversation = state.viewingConversationId === conversationId;
     const nextConversation = normalizeConversation({
       id: conversationId,
       name: name ?? existingConversation?.name ?? `Conversation ${conversationId}`,
       avatar: avatar ?? existingConversation?.avatar ?? null,
-      unread: resetUnread ? 0 : Math.max(0, (existingConversation?.unread ?? 0) + unreadDelta),
+      unread: isViewingConversation || resetUnread ? 0 : Math.max(0, (existingConversation?.unread ?? 0) + unreadDelta),
       type: existingConversation?.type ?? message?.type ?? 'private_chat',
       isGroup: existingConversation?.isGroup ?? false,
       otherUserId: otherUserId ?? existingConversation?.otherUserId ?? null,
@@ -166,7 +240,8 @@ const useChatStore = create((set, get) => ({
     );
 
     return {
-      conversations: sortConversations(updatedConversations)
+      conversations: sortConversations(updatedConversations),
+      viewingConversationId: conversationId
     };
   }),
   
@@ -247,12 +322,12 @@ const useChatStore = create((set, get) => ({
       return index === messages.findIndex((candidate) => messageMatches(candidate, realMessage, clientMessageId));
     }).map((message) => (
       messageMatches(message, realMessage, clientMessageId)
-        ? { ...realMessage, status: 'sent', isTemp: false }
+        ? normalizeMessage({ ...realMessage, isTemp: false })
         : message
     ));
 
     if (!hasMatchingMessage) {
-      nextMessages.push({ ...realMessage, status: 'sent', isTemp: false });
+      nextMessages.push(normalizeMessage({ ...realMessage, isTemp: false }));
     }
 
     return {
@@ -333,7 +408,8 @@ const useChatStore = create((set, get) => ({
          : conversation
      );
      return {
-       conversations: sortConversations(updatedConversations)
+       conversations: sortConversations(updatedConversations),
+       viewingConversationId: conversationId
      };
   }),
 }));

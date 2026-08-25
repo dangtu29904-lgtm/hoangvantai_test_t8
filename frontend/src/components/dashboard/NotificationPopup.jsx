@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { X, Bell, Check } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import useNotificationStore from '../../store/notificationStore';
 
 const Avatar = ({ name = 'U', src }) => (
@@ -9,6 +10,7 @@ const Avatar = ({ name = 'U', src }) => (
 );
 
 const NotificationPopup = ({ onClose }) => {
+  const navigate = useNavigate();
   const { 
     notifications, 
     loading, 
@@ -20,6 +22,17 @@ const NotificationPopup = ({ onClose }) => {
   useEffect(() => {
     fetchNotifications(0, 10);
   }, [fetchNotifications]);
+
+  const openNotification = async (item) => {
+    if (!item.read) {
+      await markItemAsRead(item.id);
+    }
+
+    if (item.postId) {
+      navigate(`/posts/${item.postId}`);
+      onClose?.();
+    }
+  };
 
   return (
     <div className="fixed right-4 top-16 z-50 w-[360px] overflow-hidden rounded-xl bg-[#242526] shadow-2xl ring-1 ring-[#3e4042] text-[#e4e6eb]">
@@ -52,7 +65,7 @@ const NotificationPopup = ({ onClose }) => {
           notifications.map(item => (
             <div 
               key={item.id} 
-              onClick={() => !item.read && markItemAsRead(item.id)}
+              onClick={() => openNotification(item)}
               className={`flex items-start gap-3 p-3 transition cursor-pointer hover:bg-[#3a3b3c] ${
                 !item.read ? 'bg-[#263951]/70' : ''
               }`}

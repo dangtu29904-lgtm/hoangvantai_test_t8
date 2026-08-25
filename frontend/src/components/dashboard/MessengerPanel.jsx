@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Maximize2, MessageCircle, MoreHorizontal, Pencil, Search, X } from 'lucide-react';
 import { chatApi } from '../../services/api';
 import useChatStore from '../../store/chatStore';
@@ -21,10 +21,38 @@ const Avatar = ({ conversation, online }) => (
   </div>
 );
 
-const MessengerPanel = ({ chatActions, onClose, onOpenMessenger }) => {
+const HISTORY_PAGE_SIZE = 50;
+
+const normalizeMessage = (message) => ({
+  ...message,
+  status: message.seenAt ? 'seen' : message.deliveredAt ? 'delivered' : 'sent'
+});
+
+async function fetchAllConversationMessages(conversationId) {
+  const allMessages = [];
+  let beforeSequence = null;
+  let hasMore = true;
+  let safety = 50;
+
+  while (hasMore && safety-- > 0) {
+    const data = await chatApi.getMessages(conversationId, beforeSequence, HISTORY_PAGE_SIZE);
+    const items = data.items || [];
+    allMessages.push(...items);
+
+    hasMore = Boolean(data.hasMore);
+    beforeSequence = data.nextBeforeSequence ?? null;
+
+    if (!hasMore || beforeSequence == null) break;
+  }
+
+  return allMessages;
+}
+
+const MessengerPanel = ({ chatActions, onClose, onOpenMessenger, onNewConversation }) => {
   const conversations = useChatStore(state => state.conversations);
   const setActiveConversation = useChatStore(state => state.setActiveConversation);
   const setMessages = useChatStore(state => state.setMessages);
+  const markConversationSeen = useChatStore(state => state.markConversationSeen);
   const setConversations = useChatStore(state => state.setConversations);
   const setViewingConversation = useChatStore(state => state.setViewingConversation);
   const updatePresence = useChatStore(state => state.updatePresence);
@@ -38,16 +66,12 @@ const MessengerPanel = ({ chatActions, onClose, onOpenMessenger }) => {
   const [replyTo, setReplyTo] = useState(null);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [conversationError, setConversationError] = useState('');
+  const messageScrollRef = useRef(null);
 
   const activeConversation = useChatStore(state => state.activeConversation);
+  const messages = useChatStore(state => state.messages[selectedConversation?.id] || EMPTY_MESSAGES);
 
   useEffect(() => () => setViewingConversation(null), [setViewingConversation]);
-
-  useEffect(() => {
-    if (activeConversation) {
-      openConversation(activeConversation);
-    }
-  }, [activeConversation]);
 
   useEffect(() => {
     const loadConversations = async () => {
@@ -96,6 +120,34 @@ const MessengerPanel = ({ chatActions, onClose, onOpenMessenger }) => {
     loadConversations();
   }, [setConversations, updatePresence, user?.id]);
 
+  const refreshConversationList = async () => {
+    try {
+      const data = await chatApi.getConversations(null, 20);
+      const normalized = (data.items || []).map((conversation) => ({
+        id: conversation.id,
+        name: conversation.name || `Conversation ${conversation.id}`,
+        avatar: conversation.avatarUrl,
+        type: conversation.type,
+        isGroup: conversation.type === 'groups_chat',
+        unread: conversation.unreadCount || 0,
+        lastMessage: conversation.lastMessage?.content || '',
+        lastMessageId: conversation.lastMessage?.id || null,
+        updatedAt: conversation.updatedAt,
+      }));
+      const enriched = await Promise.all(normalized.map(async item => {
+        if (item.isGroup) return item;
+        try {
+          const detail = await chatApi.getConversationDetail(item.id);
+          const other = detail.members?.find(member => member.userId !== user?.id);
+          return { ...item, otherUserId: other?.userId || null };
+        } catch (_) {
+          return item;
+        }
+      }));
+      setConversations(enriched);
+    } catch (_) {}
+  };
+
   const filteredConversations = useMemo(() => conversations.filter((conversation) => {
     const matchesSearch = conversation.name?.toLowerCase().includes(search.toLowerCase());
     const matchesTab = tab === 'all'
@@ -109,16 +161,34 @@ const MessengerPanel = ({ chatActions, onClose, onOpenMessenger }) => {
     setSelectedConversation(conversation);
     setActiveConversation(conversation);
     setViewingConversation(conversation.id);
-    markConversationAsSeen(conversation.id);
-    if (!(useChatStore.getState().messages[conversation.id] || []).length) {
-      try {
-        const data = await chatApi.getMessages(conversation.id, null, 30);
-        setMessages(conversation.id, (data.items || []).map(message => ({ ...message, status: 'seen' })));
-      } catch (_) {}
+
+    try {
+      const hydrated = (await fetchAllConversationMessages(conversation.id)).map(normalizeMessage);
+      setMessages(conversation.id, hydrated);
+      markConversationSeen(conversation.id);
+      await markConversationAsSeen(conversation.id);
+      await refreshConversationList();
+    } catch (_) {
+      return;
     }
   };
 
-  const messages = useChatStore(state => state.messages[selectedConversation?.id] || EMPTY_MESSAGES);
+  useEffect(() => {
+    if (!selectedConversation?.id) return;
+
+    const scrollToBottom = () => {
+      if (!messageScrollRef.current) return;
+      messageScrollRef.current.scrollTop = messageScrollRef.current.scrollHeight;
+    };
+
+    const rafId = requestAnimationFrame(scrollToBottom);
+    const timeoutId = setTimeout(scrollToBottom, 80);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      clearTimeout(timeoutId);
+    };
+  }, [selectedConversation?.id, messages.length]);
 
   return (
     <section className={selectedConversation ? 'pointer-events-none fixed inset-0 z-50' : 'fixed bottom-0 right-0 top-14 z-50 flex w-[min(390px,100vw)] flex-col overflow-hidden border-l border-[#3e4042] bg-[#242526] text-[#e4e6eb] shadow-2xl'}>
@@ -128,7 +198,7 @@ const MessengerPanel = ({ chatActions, onClose, onOpenMessenger }) => {
         <div className="flex items-center gap-1 text-[#b0b3b8]">
           <button title="Menu" className="rounded-full p-2 hover:bg-[#3a3b3c]"><MoreHorizontal size={18} /></button>
           <button title="Mở rộng" onClick={onOpenMessenger} className="rounded-full p-2 hover:bg-[#3a3b3c]"><Maximize2 size={17} /></button>
-          <button title="Tin nhắn mới" className="rounded-full p-2 hover:bg-[#3a3b3c]"><Pencil size={17} /></button>
+          <button title="Tin nhắn mới" onClick={onNewConversation} className="rounded-full p-2 hover:bg-[#3a3b3c]"><Pencil size={17} /></button>
           <button title="Đóng" onClick={onClose} className="rounded-full p-2 hover:bg-[#3a3b3c]"><X size={18} /></button>
         </div>
       </header>
@@ -171,8 +241,8 @@ const MessengerPanel = ({ chatActions, onClose, onOpenMessenger }) => {
       </>}
 
       {selectedConversation && <div className="pointer-events-auto fixed bottom-4 right-4 z-60 flex h-[min(520px,calc(100dvh-90px))] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-xl bg-[#242526] shadow-2xl ring-1 ring-[#3e4042]">
-        <header className="flex items-center gap-2 border-b border-[#3e4042] bg-[#b000ff] px-3 py-2.5"><button onClick={() => { setSelectedConversation(null); setViewingConversation(null); }} className="rounded-full p-1 text-white hover:bg-white/10"><ArrowLeft size={17} /></button><Avatar conversation={selectedConversation} online={onlineUsers[selectedConversation.otherUserId]?.status === 'online'} /><strong className="min-w-0 flex-1 truncate text-sm text-white">{selectedConversation.name}<span className={`ml-2 inline-flex items-center gap-1 text-xs font-normal ${onlineUsers[selectedConversation.otherUserId]?.status === 'online' ? 'text-emerald-200' : 'text-white/60'}`}>{onlineUsers[selectedConversation.otherUserId]?.status === 'online' && <span className="h-2 w-2 rounded-full bg-emerald-300" />}{onlineUsers[selectedConversation.otherUserId]?.status === 'online' ? 'Online' : 'Offline'}</span></strong><button onClick={onOpenMessenger} title="Mở trong Messenger" className="rounded-full p-1 text-white hover:bg-white/10"><Maximize2 size={16} /></button><button onClick={() => { setSelectedConversation(null); setViewingConversation(null); }} className="rounded-full p-1 text-white hover:bg-white/10"><X size={17} /></button></header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">{messages.map((message, index) => <MessageBubble key={message.id || message.clientMessageId} theme="dark" message={message} isMine={message.senderId === user?.id} showAvatar={index === messages.length - 1 || messages[index + 1]?.senderId !== message.senderId} avatar={selectedConversation.avatar || selectedConversation.name?.charAt(0)} onEdit={(item) => { const next = window.prompt('Sửa tin nhắn', item.content); if (next?.trim()) editMessage(item.id, next.trim()); }} onRecall={recallMessage} onDelete={deleteMessageForMe} onReact={reactToMessage} onReply={setReplyTo} />)}</div>
+        <header className="flex items-center gap-2 border-b border-[#3e4042] bg-[#b000ff] px-3 py-2.5"><button onClick={() => { if (selectedConversation?.id) markConversationSeen(selectedConversation.id); setSelectedConversation(null); setActiveConversation(null); setViewingConversation(null); }} className="rounded-full p-1 text-white hover:bg-white/10"><ArrowLeft size={17} /></button><Avatar conversation={selectedConversation} online={onlineUsers[selectedConversation.otherUserId]?.status === 'online'} /><strong className="min-w-0 flex-1 truncate text-sm text-white">{selectedConversation.name}<span className={`ml-2 inline-flex items-center gap-1 text-xs font-normal ${onlineUsers[selectedConversation.otherUserId]?.status === 'online' ? 'text-emerald-200' : 'text-white/60'}`}>{onlineUsers[selectedConversation.otherUserId]?.status === 'online' && <span className="h-2 w-2 rounded-full bg-emerald-300" />}{onlineUsers[selectedConversation.otherUserId]?.status === 'online' ? 'Online' : 'Offline'}</span></strong><button onClick={onOpenMessenger} title="Mở trong Messenger" className="rounded-full p-1 text-white hover:bg-white/10"><Maximize2 size={16} /></button><button onClick={() => { if (selectedConversation?.id) markConversationSeen(selectedConversation.id); setSelectedConversation(null); setActiveConversation(null); setViewingConversation(null); }} className="rounded-full p-1 text-white hover:bg-white/10"><X size={17} /></button></header>
+        <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto p-2">{messages.map((message, index) => <MessageBubble key={message.id || message.clientMessageId} theme="dark" message={message} isMine={message.senderId === user?.id} showAvatar={index === messages.length - 1 || messages[index + 1]?.senderId !== message.senderId} avatar={selectedConversation.avatar || selectedConversation.name?.charAt(0)} onEdit={(item) => { const next = window.prompt('Sửa tin nhắn', item.content); if (next?.trim()) editMessage(item.id, next.trim()); }} onRecall={recallMessage} onDelete={deleteMessageForMe} onReact={reactToMessage} onReply={setReplyTo} />)}</div>
         {!isConnected && <div className="bg-amber-100 px-3 py-1 text-center text-xs text-amber-800">Đang kết nối lại máy chủ chat...</div>}
         {typingUserId && typingUserId !== user?.id && <div className="bg-[#242526] px-3 pb-1 text-xs text-[#b0b3b8]"><span className="mr-1 inline-flex gap-0.5"><i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#b0b3b8]" /><i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#b0b3b8] [animation-delay:120ms]" /><i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#b0b3b8] [animation-delay:240ms]" /></span>Đang nhập tin nhắn...</div>}
         <Composer theme="dark" conversationId={selectedConversation.id} sendMessage={sendMessage} setTyping={setTyping} replyTo={replyTo} onClearReply={() => setReplyTo(null)} />

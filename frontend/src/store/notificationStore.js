@@ -30,7 +30,7 @@ const useNotificationStore = create((set, get) => ({
 
   markAllAsRead: async () => {
     try {
-      await notificationApi.readAll();
+      await notificationApi.markAllRead();
       set(state => ({
         unreadCount: 0,
         notifications: state.notifications.map(item => ({ ...item, read: true })),

@@ -3,9 +3,13 @@ import { CheckCircle2, Circle, Ellipsis, MessageSquareReply, Pencil, RotateCcw, 
 
 const MessageBubble = ({ message, isMine, showAvatar, avatar, onEdit, onRecall, onDelete, onReact, onReply, theme = 'light' }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const isSystemMessage = message.messageType && message.messageType !== 'USER';
+  const systemTone = theme === 'dark'
+    ? 'text-[#8fb7ff] bg-[#2b2c30] border border-white/10'
+    : 'text-slate-700 bg-slate-100 border border-slate-200';
   
   const getStatusIcon = () => {
-    if (!isMine) return null;
+    if (!isMine || isSystemMessage) return null;
     
     switch (message.status) {
       case 'sending':
@@ -31,7 +35,14 @@ const MessageBubble = ({ message, isMine, showAvatar, avatar, onEdit, onRecall, 
   };
 
   return (
-    <div className={`flex w-full px-1 py-0.5 ${isMine ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex w-full px-1 py-0.5 ${isSystemMessage ? 'justify-center' : (isMine ? 'justify-end' : 'justify-start')}`}>
+      {isSystemMessage ? (
+        <div className={`max-w-[min(88%,760px)] rounded-2xl px-4 py-2 text-center text-[13px] font-medium leading-relaxed ${systemTone}`}>
+          {message.content || 'Thông báo hệ thống'}
+          {message.editedAt && !message.recalledAt && <span className="ml-1 text-[10px] opacity-60">Đã chỉnh sửa</span>}
+        </div>
+      ) : (
+      <>
       {!isMine && (
         <div className="mr-2 h-7 w-7 shrink-0">
           {showAvatar ? (
@@ -85,6 +96,8 @@ const MessageBubble = ({ message, isMine, showAvatar, avatar, onEdit, onRecall, 
           {getStatusIcon()}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };
