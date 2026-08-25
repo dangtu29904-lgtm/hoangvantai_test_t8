@@ -49,4 +49,19 @@ public interface FriendshipRepository
             Friendship.FriendshipStatus status,
             Pageable pageable
     );
+
+    @Query("""
+       select count(f) > 0
+       from Friendship f
+       where f.status = com.taihoang.social_backend.Entity.Friendship.FriendshipStatus.ACCEPTED
+         and (
+              (f.requester.id = :userId1 and f.receiver.id = :userId2)
+              or
+              (f.requester.id = :userId2 and f.receiver.id = :userId1)
+         )
+       """)
+    boolean existsAcceptedFriendshipBetween(
+            @Param("userId1") Long userId1,
+            @Param("userId2") Long userId2
+    );
 }

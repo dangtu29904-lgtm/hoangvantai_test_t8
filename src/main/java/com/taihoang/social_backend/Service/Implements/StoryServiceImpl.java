@@ -274,10 +274,34 @@ public class StoryServiceImpl implements StoryService {
         Page<StoryView> viewsPage = storyViewRepository.findByStory_IdOrderByViewedAtDesc(storyId, PageRequest.of(page, limit));
         long totalViews = storyViewRepository.countByStory_Id(storyId);
 
+        List<StoryView> views =
+                viewsPage.getContent();
+
+        Set<Long> viewerIds =
+                views.stream()
+                        .map(view -> view.getViewer().getId())
+                        .collect(Collectors.toSet());
+
+        Map<Long, ReactionType> reactionByViewerId =
+                viewerIds.isEmpty()
+                        ? Map.of()
+                        : storyReactionRepository
+                                .findByStory_IdAndUser_IdIn(storyId, viewerIds)
+                                .stream()
+                                .collect(Collectors.toMap(
+                                        reaction -> reaction.getUser().getId(),
+                                        StoryReaction::getType
+                                ));
+
         return new StoryViewerListResponse(
                 storyId,
                 totalViews,
-                viewsPage.getContent().stream().map(StoryViewerResponse::from).toList(),
+                views.stream()
+                        .map(view -> StoryViewerResponse.from(
+                                view,
+                                reactionByViewerId.get(view.getViewer().getId())
+                        ))
+                        .toList(),
                 page,
                 limit,
                 viewsPage.getTotalPages()

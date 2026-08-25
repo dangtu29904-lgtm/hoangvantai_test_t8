@@ -1328,7 +1328,7 @@ public class ConversationCommandServiceImpl implements ConversationCommandServic
         conversation.setAvatarUrl(
                 upload.getSecureUrl()
         );
-        conversationRepository.save(
+        conversationRepository.saveAndFlush(
                 conversation
         );
         // ==========================================
@@ -1337,39 +1337,46 @@ public class ConversationCommandServiceImpl implements ConversationCommandServic
         upload.setUsedAt(
                 LocalDateTime.now()
         );
-        chatUploadRepository.save(
+        chatUploadRepository.saveAndFlush(
                 upload
         );
-        List<Conversation_Member> members =
-                conversationMemberRepository
-                        .findMembersByConversationId(
-                                conversationId
-                        );
-        publishGroupRealtimeEvent(
-                members,
-                new GroupRealtimeEvent(
-                        UUID.randomUUID()
-                                .toString(),
-                        GroupRealtimeEventType
-                                .GROUP_AVATAR_UPDATED,
-                        conversationId,
-                        currentUserId,
-                        List.of(),
-                        null,
-                        conversation.getAvatarUrl(),
-                        List.of(),
-                        LocalDateTime.now()
-                )
-        );
-        publishSystemMessage(
-                conversationId,
-                currentUserId,
-                MessageType.GROUP_AVATAR_CHANGED,
-                currentMember
-                        .getUser()
-                        .getUserName()
-                        + " da doi anh nhom"
-        );
+        try {
+            List<Conversation_Member> members =
+                    conversationMemberRepository
+                            .findMembersByConversationId(
+                                    conversationId
+                            );
+            publishGroupRealtimeEvent(
+                    members,
+                    new GroupRealtimeEvent(
+                            UUID.randomUUID()
+                                    .toString(),
+                            GroupRealtimeEventType
+                                    .GROUP_AVATAR_UPDATED,
+                            conversationId,
+                            currentUserId,
+                            List.of(),
+                            null,
+                            conversation.getAvatarUrl(),
+                            List.of(),
+                            LocalDateTime.now()
+                    )
+            );
+            publishSystemMessage(
+                    conversationId,
+                    currentUserId,
+                    MessageType.GROUP_AVATAR_CHANGED,
+                    currentMember
+                            .getUser()
+                            .getUserName()
+                            + " da doi anh nhom"
+            );
+        } catch (Exception eventError) {
+            System.err.println(
+                    "[ConversationCommandServiceImpl] Avatar saved but realtime/event publish failed: "
+                            + eventError.getMessage()
+            );
+        }
         return new GroupAvatarResponse(
                 conversation.getId(),
                 conversation.getAvatarUrl()

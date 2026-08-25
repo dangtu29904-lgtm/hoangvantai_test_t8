@@ -17,6 +17,12 @@ public interface StoryReactionRepository extends JpaRepository<StoryReaction, Lo
     @Query("SELECT sr FROM StoryReaction sr WHERE sr.user.id = :userId AND sr.story.id IN :storyIds")
     List<StoryReaction> findByUser_IdAndStory_IdIn(@Param("userId") Long userId, @Param("storyIds") Collection<Long> storyIds);
 
+    @Query("SELECT sr FROM StoryReaction sr WHERE sr.story.id = :storyId AND sr.user.id IN :userIds")
+    List<StoryReaction> findByStory_IdAndUser_IdIn(
+            @Param("storyId") Long storyId,
+            @Param("userIds") Collection<Long> userIds
+    );
+
     long countByStory_Id(Long storyId);
 
     @Modifying

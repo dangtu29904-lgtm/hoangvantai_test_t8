@@ -43,7 +43,8 @@ public class Notification {
     @Enumerated(EnumType.STRING)
     @Column(
             name = "type",
-            nullable = false
+            nullable = false,
+            columnDefinition = "varchar(30)"
     )
     private NotificationType type;
 

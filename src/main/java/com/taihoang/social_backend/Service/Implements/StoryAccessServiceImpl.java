@@ -1,6 +1,5 @@
 package com.taihoang.social_backend.Service.Implements;
 
-import com.taihoang.social_backend.Entity.Friendship;
 import com.taihoang.social_backend.Entity.Story;
 import com.taihoang.social_backend.Entity.StoryPrivacy;
 import com.taihoang.social_backend.Repository.FriendshipRepository;
@@ -58,20 +57,9 @@ public class StoryAccessServiceImpl implements StoryAccessService {
         }
 
         if (privacy == StoryPrivacy.FRIENDS) {
-            // Determine pairKey to search friendship efficiently
-            String pairKey = generatePairKey(currentUserId, story.getAuthor().getId());
-            return friendshipRepository.findByPairKey(pairKey)
-                    .map(f -> f.getStatus() == Friendship.FriendshipStatus.ACCEPTED)
-                    .orElse(false);
+            return friendshipRepository.existsAcceptedFriendshipBetween(currentUserId, story.getAuthor().getId());
         }
 
         return false;
-    }
-
-    private String generatePairKey(Long userId1, Long userId2) {
-        if (userId1 < userId2) {
-            return userId1 + "_" + userId2;
-        }
-        return userId2 + "_" + userId1;
     }
 }

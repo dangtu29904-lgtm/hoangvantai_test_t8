@@ -233,16 +233,13 @@ public class ConversationQueryServiceIMPL implements ConversationQueryService {
                 conversation.getId(),
                 conversation.getType(),
                 resolveConversationName(conversation, members, currentUserId),
-                null,
+                resolveConversationAvatar(conversation, members, currentUserId),
                 toLastMessageResponse(lastMessage),
                 unreadCounts.getOrDefault(conversation.getId(), 0L),
                 resolveUpdatedAt(conversation, lastMessage)
         );
     }
 
-    /**
-     * Chat rieng dung ten cua nguoi con lai. Entity hien chua co ten nhom nen tam tao theo id.
-     */
     private String resolveConversationName(
             Conversations conversation,
             List<Conversation_Member> members,
@@ -256,7 +253,30 @@ public class ConversationQueryServiceIMPL implements ConversationQueryService {
                     .findFirst()
                     .orElse("Cuoc tro chuyen");
         }
+
+        if (conversation.getName() != null && !conversation.getName().isBlank()) {
+            return conversation.getName();
+        }
+
         return "Nhom chat " + conversation.getId();
+    }
+
+    private String resolveConversationAvatar(
+            Conversations conversation,
+            List<Conversation_Member> members,
+            Long currentUserId
+    ) {
+        if (conversation.getType() == Conversations.type_chat.groups_chat) {
+            return conversation.getAvatarUrl();
+        }
+
+        return members.stream()
+                .map(Conversation_Member::getUser)
+                .filter(user -> !user.getId().equals(currentUserId))
+                .map(user -> user.getAvatarUrl())
+                .filter(avatar -> avatar != null && !avatar.isBlank())
+                .findFirst()
+                .orElse(null);
     }
 
     private LastMessageResponse toLastMessageResponse(Messenger messenger) {

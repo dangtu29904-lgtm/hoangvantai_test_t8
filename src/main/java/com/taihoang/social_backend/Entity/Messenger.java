@@ -43,7 +43,7 @@ public class Messenger {
     @Column(name = "recalled_at", columnDefinition = "datetime(6)")
     private LocalDateTime recalledAt;
     @Enumerated(EnumType.STRING)
-    @Column(name = "message_type")
+    @Column(name = "message_type", columnDefinition = "varchar(40)")
     private MessageType messageType = MessageType.USER;
     
     @ManyToOne(fetch = FetchType.LAZY)
