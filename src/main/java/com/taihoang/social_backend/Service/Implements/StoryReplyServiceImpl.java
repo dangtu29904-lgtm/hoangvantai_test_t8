@@ -65,7 +65,11 @@ public class StoryReplyServiceImpl implements StoryReplyService {
 
         // 6. Idempotent: if same clientMessageId exists in conversation → return existing
         Optional<Messenger> existingMsg = messengerRepository
-                .findByConversationIdAndClientMessageId(conversation.getId(), request.clientMessageId());
+                .findByConversationIdAndUserIdAndClientMessageId(
+                        conversation.getId(),
+                        sender.getId(),
+                        request.clientMessageId()
+                );
 
         if (existingMsg.isPresent()) {
             Messenger existing = existingMsg.get();

@@ -9,7 +9,10 @@ import java.util.List;
 
 @Entity
 @Table(name= "messenger",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"conversation_id", "client_message_id"}),
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_messenger_conversation_user_client_message",
+                columnNames = {"conversation_id", "user_id", "client_message_id"}
+        ),
         indexes = @Index(name = "idx_conv_seq", columnList = "conversation_id, sequence_number"))
 @Setter
 @Getter

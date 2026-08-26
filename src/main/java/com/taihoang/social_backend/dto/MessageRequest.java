@@ -17,6 +17,10 @@ public record MessageRequest(
         @NotBlank(
                 message = "clientMessageId không được để trống"
         )
+        @Size(
+                max = 100,
+                message = "clientMessageId khong duoc vuot qua 100 ky tu"
+        )
         String clientMessageId,
 
 

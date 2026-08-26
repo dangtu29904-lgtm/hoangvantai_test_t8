@@ -99,7 +99,11 @@ public class MessageService {
         }
 
         return messengerRepository
-                .findByConversationIdAndClientMessageId(conversation.getId(), request.clientMessageId())
+                .findByConversationIdAndUserIdAndClientMessageId(
+                        conversation.getId(),
+                        sender.getId(),
+                        request.clientMessageId()
+                )
                 .map(message -> {List<MessageAttachment> attachments = messageAttachmentRepository.findByMessageIdWithUpload(message.getId());
                     return new SendMessageResult(
                             toResponse(
@@ -248,10 +252,7 @@ public class MessageService {
                     "Khong the sua system message"
             );
         }
-        // ============================
         // CHI NGUOI GUI MOI DUOC SUA
-        // ============================
-
         if (!messenger
                 .getUser()
                 .getId()
@@ -1021,20 +1022,18 @@ public class MessageService {
         if (uploadIds.isEmpty()) {
             return List.of();
         }
-        // ====================================
+
         // 1. CHECK + LOCK UPLOADS
-        // ====================================
+
         List<ChatUpload> uploads =
                 resolveUploads(
                         sender,
                         uploadIds
                 );
         /*
-         * Query IN không đảm bảo thứ tự.
-         *
-         * Chuyển thành Map:
-         *
-         * uploadId -> ChatUpload
+         Query IN không đảm bảo thứ tự.
+          Chuyển thành Map:
+          uploadId -> ChatUpload
          */
         Map<Long, ChatUpload> uploadById =
                 uploads

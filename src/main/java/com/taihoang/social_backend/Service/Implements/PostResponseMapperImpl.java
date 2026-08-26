@@ -3,20 +3,28 @@ package com.taihoang.social_backend.Service.Implements;
 import com.taihoang.social_backend.Entity.ChatUpload;
 import com.taihoang.social_backend.Entity.Post;
 import com.taihoang.social_backend.Entity.PostMedia;
+import com.taihoang.social_backend.Entity.PostReaction;
+import com.taihoang.social_backend.Entity.ReactionType;
 import com.taihoang.social_backend.Entity.User;
 import com.taihoang.social_backend.Repository.PostMediaRepository;
 import com.taihoang.social_backend.Repository.PostMentionRepository;
+import com.taihoang.social_backend.Repository.PostCommentRepository;
+import com.taihoang.social_backend.Repository.PostReactionRepository;
 import com.taihoang.social_backend.Repository.PostRepository;
 import com.taihoang.social_backend.Service.PostAccessService;
 import com.taihoang.social_backend.Service.PostResponseMapper;
 import com.taihoang.social_backend.dto.MentionedUserResponse;
 import com.taihoang.social_backend.dto.OriginalPostResponse;
+import com.taihoang.social_backend.dto.PostEngagementResponse;
 import com.taihoang.social_backend.dto.PostMediaResponse;
 import com.taihoang.social_backend.dto.PostResponse;
+import com.taihoang.social_backend.dto.ReactionCountProjection;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -31,6 +39,10 @@ public class PostResponseMapperImpl
             postAccessService;
     private final PostRepository
             postRepository;
+    private final PostReactionRepository
+            postReactionRepository;
+    private final PostCommentRepository
+            postCommentRepository;
 
     @Override
     public PostResponse toResponse(
@@ -77,6 +89,12 @@ public class PostResponseMapperImpl
         List<MentionedUserResponse> mentions =
                 buildMentions(post.getId());
 
+        PostEngagementResponse engagement =
+                buildEngagement(
+                        currentUserId,
+                        post.getId()
+                );
+
         long shareCount =
                 getShareCount(
                         post
@@ -108,6 +126,8 @@ public class PostResponseMapperImpl
 
                 mentions,
 
+                engagement,
+
                 shareCount,
 
                 originalPost,
@@ -115,6 +135,55 @@ public class PostResponseMapperImpl
                 post.getCreatedAt(),
 
                 post.getUpdatedAt()
+        );
+    }
+
+    private PostEngagementResponse buildEngagement(
+
+            Long currentUserId,
+
+            Long postId
+    ) {
+
+        long totalReactions =
+                postReactionRepository
+                        .countByPost_Id(
+                                postId
+                        );
+
+        ReactionType myReaction =
+                postReactionRepository
+                        .findByPost_IdAndUser_Id(
+                                postId,
+                                currentUserId
+                        )
+                        .map(PostReaction::getType)
+                        .orElse(null);
+
+        Map<ReactionType, Long> reactionCounts =
+                postReactionRepository
+                        .countReactionTypes(
+                                postId
+                        )
+                        .stream()
+                        .collect(
+                                Collectors.toMap(
+                                        ReactionCountProjection::getType,
+                                        ReactionCountProjection::getCount
+                                )
+                        );
+
+        long commentCount =
+                postCommentRepository
+                        .countByPost_IdAndDeletedFalse(
+                                postId
+                        );
+
+        return new PostEngagementResponse(
+                totalReactions,
+                reactionCounts,
+                myReaction,
+                commentCount
         );
     }
 

@@ -23,6 +23,8 @@ public record PostResponse(
 
         List<MentionedUserResponse> mentions,
 
+        PostEngagementResponse engagement,
+
         long shareCount,
 
         OriginalPostResponse originalPost,
