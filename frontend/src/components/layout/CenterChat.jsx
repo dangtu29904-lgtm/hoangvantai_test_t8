@@ -20,7 +20,7 @@ import { chatApi } from '../../services/api';
 
 const PAGE_SIZE = 30;
 
-const CenterChat = ({ markConversationAsSeen, sendMessage, editMessage, recallMessage, deleteMessageForMe, reactToMessage, setTyping, onOpenGroupSettings }) => {
+const CenterChat = ({ markConversationAsSeen, sendMessage, retryMessage, editMessage, recallMessage, deleteMessageForMe, reactToMessage, setTyping, onOpenGroupSettings }) => {
   const activeConversation = useChatStore(state => state.activeConversation);
   const setActiveConversation = useChatStore(state => state.setActiveConversation);
   const activeConversationDetail = useChatStore(state => state.activeConversationDetail);
@@ -405,6 +405,7 @@ const CenterChat = ({ markConversationAsSeen, sendMessage, editMessage, recallMe
                 onDelete={(messageId) => deleteMessageForMe(messageId)}
                 onReact={reactToMessage}
                 onReply={setReplyTo}
+                onRetry={retryMessage}
               />
             );
           })}

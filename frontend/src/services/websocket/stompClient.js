@@ -58,6 +58,10 @@ class WebSocketService {
     this.connectCount = 0;
   }
 
+  isConnected() {
+    return Boolean(this.client && this.client.connected);
+  }
+
   _startPresenceHeartbeat() {
     this._stopPresenceHeartbeat();
     this.presenceHeartbeatTimer = setInterval(() => {
@@ -123,13 +127,20 @@ class WebSocketService {
 
   send(destination, body) {
     if (this.client && this.client.connected) {
-      this.client.publish({
-        destination,
-        body: JSON.stringify(body)
-      });
-    } else {
-      console.warn('Cannot send STOMP message, not connected');
+      try {
+        this.client.publish({
+          destination,
+          body: JSON.stringify(body)
+        });
+        return true;
+      } catch (error) {
+        console.warn('Cannot publish STOMP message', error);
+        return false;
+      }
     }
+
+    console.warn('Cannot send STOMP message, not connected');
+    return false;
   }
 }
 

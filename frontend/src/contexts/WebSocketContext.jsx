@@ -3,10 +3,14 @@ import { useAuth } from './AuthContext';
 import { wsService } from '../services/websocket/stompClient';
 import useChatStore from '../store/chatStore';
 import { chatApi } from '../services/api';
+import { resendPendingMessagesAfterReconnect } from '../services/websocket/chatReliability';
+import {
+  getSyncRetryDelayMs,
+  isRetryableSyncError,
+  SYNC_RETRY_MAX_ATTEMPTS
+} from '../services/websocket/chatSyncReliability';
 
 const WebSocketContext = createContext();
-
-const PAGE_SIZE = 50;
 
 async function fetchAllMissedMessages() {
   const allMessages = [];
@@ -35,19 +39,69 @@ const normalizeIncomingMessage = (message) => ({
 
 const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }) => {
   const { user } = useAuth();
-  const viewingConversationId = useChatStore(state => state.viewingConversationId);
   const addMessage = useChatStore(state => state.addMessage);
   const confirmMessage = useChatStore(state => state.confirmMessage);
   const clearAckTimer = useChatStore(state => state.clearAckTimer);
+  const clearOutboundInFlight = useChatStore(state => state.clearOutboundInFlight);
   const removePendingOutbound = useChatStore(state => state.removePendingOutbound);
   const updateMessageStatus = useChatStore(state => state.updateMessageStatus);
   const updateConversationFromMessage = useChatStore(state => state.updateConversationFromMessage);
   const markConversationSeen = useChatStore(state => state.markConversationSeen);
-  const setMessages = useChatStore(state => state.setMessages);
   const applyGroupRealtimeEvent = useChatStore(state => state.applyGroupRealtimeEvent);
 
   const isSyncingRef = useRef(false);
   const pendingSyncCountRef = useRef(0);
+  const isResendingPendingRef = useRef(false);
+  const syncRetryWaitRef = useRef(null);
+  const syncMountedRef = useRef(true);
+
+  const cancelSyncRetryWait = useCallback(() => {
+    const pendingWait = syncRetryWaitRef.current;
+    if (!pendingWait) return;
+
+    clearTimeout(pendingWait.timerId);
+    pendingWait.resolve(false);
+    syncRetryWaitRef.current = null;
+  }, []);
+
+  const isCurrentSyncConnection = useCallback((syncCount) => (
+    syncMountedRef.current
+      && Boolean(wsService.isConnected?.())
+      && wsService.connectCount === syncCount
+  ), [wsService]);
+
+  const waitForSyncRetry = useCallback((delayMs, syncCount) => {
+    cancelSyncRetryWait();
+
+    return new Promise((resolve) => {
+      if (!isCurrentSyncConnection(syncCount)) {
+        resolve(false);
+        return;
+      }
+
+      const timerId = setTimeout(() => {
+        syncRetryWaitRef.current = null;
+        resolve(isCurrentSyncConnection(syncCount));
+      }, delayMs);
+
+      syncRetryWaitRef.current = { timerId, resolve };
+    });
+  }, [cancelSyncRetryWait, isCurrentSyncConnection]);
+
+  useEffect(() => {
+    syncMountedRef.current = true;
+
+    return () => {
+      syncMountedRef.current = false;
+      cancelSyncRetryWait();
+    };
+  }, [cancelSyncRetryWait]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      cancelSyncRetryWait();
+    }
+  }, [cancelSyncRetryWait, isConnected]);
 
   const processIncomingMessage = useCallback((msg, source) => {
     const conversationId = msg.conversationId;
@@ -85,6 +139,7 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
 
     const handleAck = (msg) => {
       clearAckTimer(msg.clientMessageId);
+      clearOutboundInFlight(msg.clientMessageId);
       confirmMessage(msg.conversationId, msg.clientMessageId, msg);
       removePendingOutbound(msg.clientMessageId);
       updateConversationFromMessage(msg.conversationId, msg, {
@@ -195,14 +250,100 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
       wsService.unsubscribe('/user/queue/chat.typing', handleTyping);
       wsService.unsubscribe('/user/queue/conversations.events', handleConversationEvent);
     };
-  }, [isConnected, user, processIncomingMessage, clearAckTimer, confirmMessage, removePendingOutbound, updateConversationFromMessage, updateMessageStatus, applyGroupRealtimeEvent, wsService]);
+  }, [isConnected, user, processIncomingMessage, clearAckTimer, clearOutboundInFlight, confirmMessage, removePendingOutbound, updateConversationFromMessage, updateMessageStatus, applyGroupRealtimeEvent, wsService]);
 
   useEffect(() => {
     if (connectCount === 0 || !user || !isConnected) return;
 
+    const resendPendingAfterReconnect = async () => {
+      const currentAttemptKey = wsService.connectCount ?? connectCount;
+      if (currentAttemptKey <= 1 || isResendingPendingRef.current) return;
+      if (!wsService.isConnected?.()) return;
+
+      const hasPending = Object.keys(useChatStore.getState().pendingOutbound).length > 0;
+      if (!hasPending) return;
+
+      isResendingPendingRef.current = true;
+      try {
+        await resendPendingMessagesAfterReconnect({
+          wsService,
+          isConnected: () => Boolean(wsService.isConnected?.()),
+          attemptKey: currentAttemptKey
+        });
+      } finally {
+        isResendingPendingRef.current = false;
+      }
+    };
+
+    const processMissedMessages = (missedMessages) => {
+      if (missedMessages.length === 0) return;
+
+      const currentViewingId = useChatStore.getState().viewingConversationId;
+      const seenConversationIds = new Set();
+
+      for (const msg of missedMessages) {
+        const inserted = processIncomingMessage(msg, 'sync');
+        if (inserted && currentViewingId === msg.conversationId) {
+          seenConversationIds.add(msg.conversationId);
+        }
+      }
+
+      for (const cid of seenConversationIds) {
+        wsService.send('/app/chat.seenConversation', { conversationId: cid });
+        useChatStore.getState().markConversationSeen(cid);
+      }
+    };
+
+    const runSyncCycle = async (syncCount) => {
+      let hasTriggeredResend = false;
+      const triggerResendOnce = () => {
+        if (hasTriggeredResend) return;
+        hasTriggeredResend = true;
+        void resendPendingAfterReconnect();
+      };
+
+      for (let attemptIndex = 0; attemptIndex < SYNC_RETRY_MAX_ATTEMPTS; attemptIndex += 1) {
+        if (!isCurrentSyncConnection(syncCount)) return;
+
+        try {
+          console.debug(`[ChatSync] attempt ${attemptIndex + 1}`);
+          const missedMessages = await fetchAllMissedMessages();
+
+          if (!isCurrentSyncConnection(syncCount)) return;
+
+          processMissedMessages(missedMessages);
+          triggerResendOnce();
+          cancelSyncRetryWait();
+          console.debug('[ChatSync] success');
+          return;
+        } catch (error) {
+          triggerResendOnce();
+
+          if (!isCurrentSyncConnection(syncCount)) return;
+
+          if (!isRetryableSyncError(error)) {
+            const status = error?.response?.status ?? 'unknown';
+            console.error(`[ChatSync] non-retryable ${status}`, error);
+            return;
+          }
+
+          if (attemptIndex >= SYNC_RETRY_MAX_ATTEMPTS - 1) {
+            console.error('[ChatSync] retries exhausted', error);
+            return;
+          }
+
+          const delayMs = getSyncRetryDelayMs(attemptIndex);
+          console.warn(`[ChatSync] retry in ${delayMs}ms`, error);
+
+          const shouldRetry = await waitForSyncRetry(delayMs, syncCount);
+          if (!shouldRetry) return;
+        }
+      }
+    };
+
     const runSync = async () => {
       if (isSyncingRef.current) {
-        pendingSyncCountRef.current = connectCount;
+        pendingSyncCountRef.current = Math.max(pendingSyncCountRef.current, connectCount);
         return;
       }
 
@@ -210,24 +351,9 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
       let currentSyncCount = connectCount;
 
       try {
-        while (true) {
-          const missedMessages = await fetchAllMissedMessages();
-          if (missedMessages.length > 0) {
-            const currentViewingId = useChatStore.getState().viewingConversationId;
-            const seenConversationIds = new Set();
-
-            for (const msg of missedMessages) {
-              const inserted = processIncomingMessage(msg, 'sync');
-              if (inserted && currentViewingId === msg.conversationId) {
-                seenConversationIds.add(msg.conversationId);
-              }
-            }
-
-            for (const cid of seenConversationIds) {
-              wsService.send('/app/chat.seenConversation', { conversationId: cid });
-              useChatStore.getState().markConversationSeen(cid);
-            }
-          }
+        while (syncMountedRef.current && wsService.isConnected?.()) {
+          pendingSyncCountRef.current = 0;
+          await runSyncCycle(currentSyncCount);
 
           if (pendingSyncCountRef.current > currentSyncCount) {
             currentSyncCount = pendingSyncCountRef.current;
@@ -235,16 +361,15 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
             break;
           }
         }
-      } catch (error) {
-        console.error('[WebSocketBridge] sync failed:', error);
       } finally {
+        cancelSyncRetryWait();
         isSyncingRef.current = false;
         pendingSyncCountRef.current = 0;
       }
     };
 
     runSync();
-  }, [connectCount, isConnected, markConversationSeen, processIncomingMessage, setMessages, user, wsService]);
+  }, [cancelSyncRetryWait, connectCount, isConnected, isCurrentSyncConnection, processIncomingMessage, user, waitForSyncRetry, wsService]);
 
   return children;
 };

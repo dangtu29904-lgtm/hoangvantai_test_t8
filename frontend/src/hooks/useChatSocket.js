@@ -1,21 +1,39 @@
 import { useCallback } from 'react';
 import { useWebSocket } from '../contexts/WebSocketContext';
+import useChatStore from '../store/chatStore';
+import { sendPendingMessage } from '../services/websocket/chatReliability';
 
 const useChatSocket = () => {
   const { isConnected, connectCount, wsService } = useWebSocket();
 
   const sendMessage = useCallback((conversationId, content, clientMessageId, replyToMessageId = null, uploadIds = []) => {
-    if (!isConnected) return false;
+    const pending = useChatStore.getState().pendingOutbound[clientMessageId];
+    if (pending) {
+      return sendPendingMessage(clientMessageId, {
+        wsService,
+        isConnected,
+        allowSending: true,
+        attemptKey: connectCount
+      });
+    }
 
-    wsService.send('/app/chat.send', {
+    return wsService.send('/app/chat.send', {
       conversationId,
       content,
       clientMessageId,
       replyToMessageId,
       uploadIds
     });
-    return true;
-  }, [isConnected, wsService]);
+  }, [connectCount, isConnected, wsService]);
+
+  const retryMessage = useCallback((clientMessageId) => {
+    return sendPendingMessage(clientMessageId, {
+      wsService,
+      isConnected,
+      allowSending: false,
+      attemptKey: connectCount
+    });
+  }, [connectCount, isConnected, wsService]);
 
   const markAsSeen = useCallback((messageId) => {
     if (isConnected) {
@@ -44,6 +62,7 @@ const useChatSocket = () => {
     connectCount,
     wsService,
     sendMessage,
+    retryMessage,
     markAsSeen,
     markConversationAsSeen,
     editMessage,

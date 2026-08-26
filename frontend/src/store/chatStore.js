@@ -4,6 +4,8 @@ export const TYPING_TIMEOUT_MS = 4000;
 export const MESSAGE_ACK_TIMEOUT_MS = 8000;
 const typingTimers = new Map();
 const ackTimers = new Map();
+const inFlightClientMessageIds = new Set();
+const inFlightClientMessageAttempts = new Map();
 
 const clearAckTimerByClientMessageId = (clientMessageId) => {
   if (!clientMessageId) return;
@@ -15,6 +17,11 @@ const clearAckTimerByClientMessageId = (clientMessageId) => {
 const clearAllAckTimers = () => {
   ackTimers.forEach((timer) => clearTimeout(timer));
   ackTimers.clear();
+};
+
+const clearAllInFlightClientMessageIds = () => {
+  inFlightClientMessageIds.clear();
+  inFlightClientMessageAttempts.clear();
 };
 
 const createClientMessageId = () => (
@@ -122,6 +129,28 @@ const messageMatches = (message, realMessage, clientMessageId) => (
   || (realMessage.clientMessageId != null && message.clientMessageId === realMessage.clientMessageId)
 );
 
+const mergeHistoryWithPendingTemps = (serverMessages, localMessages, pendingOutbound) => {
+  const normalizedServerMessages = serverMessages.map(normalizeMessage);
+  const serverClientMessageIds = new Set(
+    normalizedServerMessages
+      .map((message) => message.clientMessageId)
+      .filter(Boolean)
+  );
+
+  const pendingTempMessages = localMessages.filter((message) => {
+    const clientMessageId = message.clientMessageId;
+    return message.isTemp
+      && clientMessageId
+      && pendingOutbound[clientMessageId]
+      && !serverClientMessageIds.has(clientMessageId);
+  });
+
+  return sortMessages([
+    ...normalizedServerMessages,
+    ...pendingTempMessages.map(normalizeMessage)
+  ]);
+};
+
 const useChatStore = create((set, get) => ({
   conversations: [],
   activeConversation: null,
@@ -131,6 +160,7 @@ const useChatStore = create((set, get) => ({
   onlineUsers: {}, // { userId: { status, lastSeenAt } }
   typingUsers: {},
   pendingOutbound: {}, // { clientMessageId: pending message metadata }
+  inFlightOutbound: {}, // { clientMessageId: true }
   
   setConversations: (conversations) => set((state) => {
     const merged = conversations.map((conversation) => {
@@ -386,12 +416,21 @@ const useChatStore = create((set, get) => ({
     };
   }),
   
-  setMessages: (conversationId, messages) => set((state) => ({
-    messages: {
-      ...state.messages,
-      [conversationId]: sortMessages(messages.map(normalizeMessage))
-    }
-  })),
+  setMessages: (conversationId, messages) => set((state) => {
+    const localMessages = state.messages[conversationId] || [];
+    const nextMessages = mergeHistoryWithPendingTemps(
+      messages,
+      localMessages,
+      state.pendingOutbound
+    );
+
+    return {
+      messages: {
+        ...state.messages,
+        [conversationId]: nextMessages
+      }
+    };
+  }),
 
   appendMessages: (conversationId, messages) => set((state) => {
     const prevMessages = state.messages[conversationId] || [];
@@ -461,8 +500,52 @@ const useChatStore = create((set, get) => ({
     }
   })),
 
+  beginOutboundInFlight: (clientMessageId, attemptKey = null) => {
+    if (!clientMessageId || inFlightClientMessageIds.has(clientMessageId)) return false;
+    inFlightClientMessageIds.add(clientMessageId);
+    inFlightClientMessageAttempts.set(clientMessageId, attemptKey);
+    set((state) => ({
+      inFlightOutbound: {
+        ...state.inFlightOutbound,
+        [clientMessageId]: { attemptKey }
+      }
+    }));
+    return true;
+  },
+
+  clearOutboundInFlight: (clientMessageId) => {
+    if (!clientMessageId) return;
+    inFlightClientMessageIds.delete(clientMessageId);
+    inFlightClientMessageAttempts.delete(clientMessageId);
+    set((state) => {
+      if (!state.inFlightOutbound[clientMessageId]) return state;
+      const nextInFlight = { ...state.inFlightOutbound };
+      delete nextInFlight[clientMessageId];
+      return { inFlightOutbound: nextInFlight };
+    });
+  },
+
+  isOutboundInFlight: (clientMessageId) => (
+    Boolean(clientMessageId) && inFlightClientMessageIds.has(clientMessageId)
+  ),
+
+  releaseStaleOutboundInFlight: (clientMessageId, currentAttemptKey) => {
+    if (!clientMessageId || !inFlightClientMessageIds.has(clientMessageId)) return true;
+
+    const attemptKey = inFlightClientMessageAttempts.get(clientMessageId);
+    const isStale = currentAttemptKey == null
+      || attemptKey == null
+      || Number(attemptKey) < Number(currentAttemptKey);
+
+    if (!isStale) return false;
+
+    get().clearOutboundInFlight(clientMessageId);
+    return true;
+  },
+
   removePendingOutbound: (clientMessageId) => {
     clearAckTimerByClientMessageId(clientMessageId);
+    get().clearOutboundInFlight(clientMessageId);
     set((state) => {
       const nextPending = { ...state.pendingOutbound };
       delete nextPending[clientMessageId];
@@ -493,7 +576,8 @@ const useChatStore = create((set, get) => ({
 
   clearPendingOutbound: () => {
     clearAllAckTimers();
-    set({ pendingOutbound: {} });
+    clearAllInFlightClientMessageIds();
+    set({ pendingOutbound: {}, inFlightOutbound: {} });
   },
 
   startAckTimer: (clientMessageId) => {
@@ -501,12 +585,14 @@ const useChatStore = create((set, get) => ({
     const timer = setTimeout(() => {
       const pending = get().pendingOutbound[clientMessageId];
       if (!pending) {
+        get().clearOutboundInFlight(clientMessageId);
         ackTimers.delete(clientMessageId);
         return;
       }
 
       get().markMessageFailedByClientMessageId(pending.conversationId, clientMessageId);
       get().updatePendingOutboundStatus(clientMessageId, 'failed');
+      get().clearOutboundInFlight(clientMessageId);
       ackTimers.delete(clientMessageId);
     }, MESSAGE_ACK_TIMEOUT_MS);
 
@@ -521,6 +607,20 @@ const useChatStore = create((set, get) => ({
         [conversationId]: prevMessages.map((message) => (
           message.clientMessageId === clientMessageId && message.status === 'sending'
             ? { ...message, status: 'failed' }
+            : message
+        ))
+      }
+    };
+  }),
+
+  markMessageSendingByClientMessageId: (conversationId, clientMessageId) => set((state) => {
+    const prevMessages = state.messages[conversationId] || [];
+    return {
+      messages: {
+        ...state.messages,
+        [conversationId]: prevMessages.map((message) => (
+          message.clientMessageId === clientMessageId
+            ? { ...message, status: 'sending' }
             : message
         ))
       }

@@ -13,7 +13,6 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
   const typingTimeoutRef = useRef(null);
   const addTempMessage = useChatStore(state => state.addTempMessage);
   const addPendingOutbound = useChatStore(state => state.addPendingOutbound);
-  const startAckTimer = useChatStore(state => state.startAckTimer);
   const updatePendingOutboundStatus = useChatStore(state => state.updatePendingOutboundStatus);
   const markMessageFailedByClientMessageId = useChatStore(state => state.markMessageFailedByClientMessageId);
   const { user } = useAuth();
@@ -81,9 +80,7 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
 
     // 4. Send via WebSocket STOMP
     const didSend = sendMessage(conversationId, trimmed, tempMsg.clientMessageId, replyToMessageId, messageUploadIds);
-    if (didSend) {
-      startAckTimer(tempMsg.clientMessageId);
-    } else {
+    if (!didSend) {
       markMessageFailedByClientMessageId(conversationId, tempMsg.clientMessageId);
       updatePendingOutboundStatus(tempMsg.clientMessageId, 'failed');
     }
