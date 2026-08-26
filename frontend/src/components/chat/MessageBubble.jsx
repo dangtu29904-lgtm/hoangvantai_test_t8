@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Circle, Ellipsis, MessageSquareReply, Pencil, RotateCcw, Smile, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Circle, Ellipsis, MessageSquareReply, Pencil, RotateCcw, Smile, Trash2 } from 'lucide-react';
 
 const MessageBubble = ({ message, isMine, showAvatar, avatar, onEdit, onRecall, onDelete, onReact, onReply, theme = 'light' }) => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -14,6 +14,8 @@ const MessageBubble = ({ message, isMine, showAvatar, avatar, onEdit, onRecall, 
     switch (message.status) {
       case 'sending':
         return <Circle size={12} className="text-gray-300 ml-1" />;
+      case 'failed':
+        return <AlertCircle size={14} className="ml-1 text-red-500" title="Không gửi được" />;
       case 'sent':
         return <CheckCircle2 size={12} className="text-gray-400 ml-1" />;
       case 'delivered':
@@ -88,6 +90,11 @@ const MessageBubble = ({ message, isMine, showAvatar, avatar, onEdit, onRecall, 
             );
           })}
           {message.editedAt && !message.recalledAt && <span className="ml-1 text-[10px] opacity-60">Đã chỉnh sửa</span>}
+          {isMine && message.status === 'failed' && (
+            <p className="mt-1 text-right text-[11px] font-semibold text-red-100">
+              Không gửi được
+            </p>
+          )}
         </div>
         {message.reactions?.length > 0 && <span className="absolute -bottom-2 right-2 rounded-full bg-white px-1.5 py-0.5 text-xs shadow">{message.reactions.map(reaction => reaction.type === 'LOVE' ? '❤' : '👍').join('')}</span>}
         

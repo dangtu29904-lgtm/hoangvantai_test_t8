@@ -74,6 +74,14 @@ const MessengerPanel = ({ chatActions, onClose, onOpenMessenger, onNewConversati
   useEffect(() => () => setViewingConversation(null), [setViewingConversation]);
 
   useEffect(() => {
+    if (!selectedConversation?.id) return;
+    const latestConversation = conversations.find((conversation) => conversation.id === selectedConversation.id);
+    if (latestConversation) {
+      setSelectedConversation(latestConversation);
+    }
+  }, [conversations, selectedConversation?.id]);
+
+  useEffect(() => {
     const loadConversations = async () => {
       setLoadingConversations(true);
       setConversationError('');

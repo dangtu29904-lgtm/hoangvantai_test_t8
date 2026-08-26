@@ -194,6 +194,48 @@ const ReactionBadge = ({ type, count }) => {
   );
 };
 
+const pickDefined = (...values) => values.find((value) => value !== undefined);
+
+const buildReactionSummary = (source = {}, fallback = {}) => {
+  const engagement = source?.engagement || {};
+  const totalReactions = pickDefined(
+    engagement.totalReactions,
+    source.totalReactions,
+    source.reactionCount,
+    source.total
+  );
+  const myReaction = pickDefined(
+    engagement.myReaction,
+    source.myReaction,
+    source.userReaction
+  );
+  const reactionCounts = pickDefined(
+    engagement.reactionCounts,
+    source.reactionCounts
+  );
+
+  return {
+    totalReactions: Number(totalReactions ?? fallback.totalReactions ?? 0),
+    myReaction: myReaction ?? fallback.myReaction ?? null,
+    reactionCounts: reactionCounts ?? fallback.reactionCounts ?? {},
+  };
+};
+
+const hasReactionPayload = (source = {}) => {
+  const engagement = source?.engagement || {};
+  return (
+    engagement.totalReactions !== undefined ||
+    engagement.myReaction !== undefined ||
+    engagement.reactionCounts !== undefined ||
+    source.totalReactions !== undefined ||
+    source.reactionCount !== undefined ||
+    source.total !== undefined ||
+    source.myReaction !== undefined ||
+    source.userReaction !== undefined ||
+    source.reactionCounts !== undefined
+  );
+};
+
 const ReactionListModal = ({ postId, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
@@ -507,11 +549,7 @@ const PostCard = ({ post, currentUser, onReload, onShared, savedAt }) => {
   const [showReportModal, setShowReportModal] = useState(false);
   const [hidingPost, setHidingPost] = useState(false);
   const [showReactionList, setShowReactionList] = useState(false);
-  const [reactionSummary, setReactionSummary] = useState({
-    totalReactions: post?.engagement?.totalReactions ?? post?.totalReactions ?? 0,
-    myReaction: post?.userReaction || post?.engagement?.myReaction || null,
-    reactionCounts: post?.engagement?.reactionCounts || {},
-  });
+  const [reactionSummary, setReactionSummary] = useState(() => buildReactionSummary(post));
 
   const isAuthor = currentUser?.id && post?.authorId && currentUser.id === post.authorId;
   const totalReactions = reactionSummary.totalReactions;
@@ -526,13 +564,20 @@ const PostCard = ({ post, currentUser, onReload, onShared, savedAt }) => {
     setEditMentions(uniqueMentions(post?.mentions || []));
     setEditPrivacy(post?.privacy || 'PUBLIC');
     setIsSaved(Boolean(post?.saved));
-    setReactionSummary({
-      totalReactions: post?.engagement?.totalReactions ?? post?.totalReactions ?? 0,
-      myReaction: post?.userReaction || post?.engagement?.myReaction || null,
-      reactionCounts: post?.engagement?.reactionCounts || {},
-    });
+    setReactionSummary((current) => (
+      hasReactionPayload(post) ? buildReactionSummary(post, current) : current
+    ));
     setLocalCommentCount(post?.engagement?.commentCount ?? post?.commentCount ?? 0);
-  }, [post?.id, post?.userReaction, post?.engagement?.myReaction, post?.content, post?.mentions, post?.privacy, post?.saved, post?.engagement?.commentCount, post?.commentCount]);
+  }, [
+    post,
+    post?.id,
+    post?.content,
+    post?.mentions,
+    post?.privacy,
+    post?.saved,
+    post?.engagement?.commentCount,
+    post?.commentCount,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -541,11 +586,7 @@ const PostCard = ({ post, currentUser, onReload, onShared, savedAt }) => {
       try {
         const data = await feedApi.getReactions(post.id, 0, 1);
         if (!active) return;
-        setReactionSummary({
-          totalReactions: data.totalReactions || 0,
-          myReaction: data.myReaction || null,
-          reactionCounts: data.reactionCounts || {},
-        });
+        setReactionSummary(buildReactionSummary(data));
       } catch (error) {
         console.error('Hydrate reactions error:', error);
       }
@@ -576,12 +617,7 @@ const PostCard = ({ post, currentUser, onReload, onShared, savedAt }) => {
         await feedApi.react(post.id, type);
       }
       const refreshed = await feedApi.getReactions(post.id, 0, 1);
-      setReactionSummary({
-        totalReactions: refreshed.totalReactions || 0,
-        myReaction: refreshed.myReaction || null,
-        reactionCounts: refreshed.reactionCounts || {},
-      });
-      onReload?.();
+      setReactionSummary(buildReactionSummary(refreshed));
     } catch (error) {
       console.error('React error:', error);
     }

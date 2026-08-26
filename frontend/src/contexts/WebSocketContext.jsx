@@ -38,10 +38,13 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
   const viewingConversationId = useChatStore(state => state.viewingConversationId);
   const addMessage = useChatStore(state => state.addMessage);
   const confirmMessage = useChatStore(state => state.confirmMessage);
+  const clearAckTimer = useChatStore(state => state.clearAckTimer);
+  const removePendingOutbound = useChatStore(state => state.removePendingOutbound);
   const updateMessageStatus = useChatStore(state => state.updateMessageStatus);
   const updateConversationFromMessage = useChatStore(state => state.updateConversationFromMessage);
   const markConversationSeen = useChatStore(state => state.markConversationSeen);
   const setMessages = useChatStore(state => state.setMessages);
+  const applyGroupRealtimeEvent = useChatStore(state => state.applyGroupRealtimeEvent);
 
   const isSyncingRef = useRef(false);
   const pendingSyncCountRef = useRef(0);
@@ -81,7 +84,9 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
     };
 
     const handleAck = (msg) => {
+      clearAckTimer(msg.clientMessageId);
       confirmMessage(msg.conversationId, msg.clientMessageId, msg);
+      removePendingOutbound(msg.clientMessageId);
       updateConversationFromMessage(msg.conversationId, msg, {
         unreadDelta: 0,
         resetUnread: true
@@ -116,6 +121,54 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
         useChatStore.getState().setTyping(event.conversationId, event.userId, event.typing);
       }
     };
+    const handleConversationEvent = async (event) => {
+      if (!event?.conversationId) return;
+
+      const store = useChatStore.getState();
+      store.applyGroupRealtimeEvent(event, user.id);
+
+      const currentUserIsTarget = (event.targetUserIds || [])
+        .some((userId) => Number(userId) === Number(user.id));
+      const removedForCurrentUser = currentUserIsTarget
+        && ['GROUP_MEMBER_REMOVED', 'GROUP_MEMBER_LEFT'].includes(event.type);
+
+      if (removedForCurrentUser) return;
+
+      const shouldRefreshDetail = [
+        'GROUP_MEMBERS_ADDED',
+        'GROUP_MEMBER_REMOVED',
+        'GROUP_MEMBER_LEFT',
+        'GROUP_MEMBER_ROLE_UPDATED'
+      ].includes(event.type);
+
+      if (!shouldRefreshDetail) return;
+
+      try {
+        const detail = await chatApi.getConversationDetail(event.conversationId);
+        const latest = useChatStore.getState();
+        const existingConversation = latest.conversations.find((conversation) =>
+          Number(conversation.id) === Number(detail.id)
+        );
+
+        latest.upsertConversation({
+          id: detail.id,
+          name: detail.name || existingConversation?.name || `Conversation ${detail.id}`,
+          avatar: detail.avatarUrl ?? existingConversation?.avatar ?? null,
+          unread: existingConversation?.unread ?? 0,
+          type: detail.type,
+          isGroup: detail.type === 'groups_chat',
+          lastMessage: existingConversation?.lastMessage ?? '',
+          lastMessageId: existingConversation?.lastMessageId ?? null,
+          updatedAt: existingConversation?.updatedAt ?? event.occurredAt ?? null
+        });
+
+        if (Number(latest.activeConversationDetail?.id) === Number(detail.id)) {
+          latest.setActiveConversationDetail(detail);
+        }
+      } catch (error) {
+        console.error('[WebSocketBridge] refresh conversation event failed:', error);
+      }
+    };
 
     wsService.subscribe('/user/queue/messages', handleNewMessage);
     wsService.subscribe('/user/queue/messages.ack', handleAck);
@@ -127,6 +180,7 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
     wsService.subscribe('/user/queue/messages.deleted-for-me', handleDeleted);
     wsService.subscribe('/user/queue/messages.reaction', handleReaction);
     wsService.subscribe('/user/queue/chat.typing', handleTyping);
+    wsService.subscribe('/user/queue/conversations.events', handleConversationEvent);
 
     return () => {
       wsService.unsubscribe('/user/queue/messages', handleNewMessage);
@@ -139,8 +193,9 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
       wsService.unsubscribe('/user/queue/messages.deleted-for-me', handleDeleted);
       wsService.unsubscribe('/user/queue/messages.reaction', handleReaction);
       wsService.unsubscribe('/user/queue/chat.typing', handleTyping);
+      wsService.unsubscribe('/user/queue/conversations.events', handleConversationEvent);
     };
-  }, [isConnected, user, processIncomingMessage, confirmMessage, updateConversationFromMessage, updateMessageStatus, wsService]);
+  }, [isConnected, user, processIncomingMessage, clearAckTimer, confirmMessage, removePendingOutbound, updateConversationFromMessage, updateMessageStatus, applyGroupRealtimeEvent, wsService]);
 
   useEffect(() => {
     if (connectCount === 0 || !user || !isConnected) return;
@@ -223,12 +278,14 @@ export const WebSocketProvider = ({ children }) => {
         () => setIsConnected(false)
       );
     } else {
+      useChatStore.getState().clearPendingOutbound();
       wsService.disconnect();
       setIsConnected(false);
       setConnectCount(0);
     }
 
     return () => {
+      useChatStore.getState().clearPendingOutbound();
       wsService.disconnect();
     };
   }, [token, isAuthenticated]);

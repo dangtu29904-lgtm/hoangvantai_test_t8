@@ -12,6 +12,10 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
   const [uploading, setUploading] = useState(false);
   const typingTimeoutRef = useRef(null);
   const addTempMessage = useChatStore(state => state.addTempMessage);
+  const addPendingOutbound = useChatStore(state => state.addPendingOutbound);
+  const startAckTimer = useChatStore(state => state.startAckTimer);
+  const updatePendingOutboundStatus = useChatStore(state => state.updatePendingOutboundStatus);
+  const markMessageFailedByClientMessageId = useChatStore(state => state.markMessageFailedByClientMessageId);
   const { user } = useAuth();
   const { isConnected } = useWebSocket();
   const textareaRef = useRef(null);
@@ -29,20 +33,43 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
   const handleSend = () => {
     if (!canSend) return;
     const trimmed = content.trim();
+    const messageUploadIds = [...uploadIds];
+    const messageAttachments = uploadedFiles.map(f => ({
+      attachmentId: f.uploadId,
+      url: f.url,
+      type: f.type,
+      originalFileName: f.originalFileName
+    }));
+    const replyToMessageId = replyTo?.id ?? null;
 
     // 1. Create temporary message for optimistic UI
     const tempMsg = createTempMessage(trimmed, conversationId, user.id);
-    if (uploadedFiles.length > 0) {
-      tempMsg.attachments = uploadedFiles.map(f => ({
-        attachmentId: f.uploadId,
-        url: f.url,
-        type: f.type,
-        originalFileName: f.originalFileName
-      }));
+    if (messageAttachments.length > 0) {
+      tempMsg.attachments = messageAttachments;
+    }
+    if (replyTo) {
+      tempMsg.replyTo = {
+        id: replyTo.id,
+        senderId: replyTo.senderId,
+        senderName: replyTo.senderName,
+        content: replyTo.content,
+        recalled: Boolean(replyTo.recalledAt)
+      };
     }
     
     // 2. Add to local state instantly
     addTempMessage(conversationId, tempMsg);
+    addPendingOutbound({
+      conversationId,
+      clientMessageId: tempMsg.clientMessageId,
+      content: trimmed,
+      replyToMessageId,
+      replyTo: tempMsg.replyTo ?? null,
+      uploadIds: messageUploadIds,
+      attachments: messageAttachments,
+      status: 'sending',
+      createdAt: tempMsg.sentAt
+    });
     
     // 3. Clear input & attachments
     setContent('');
@@ -53,7 +80,13 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
     }
 
     // 4. Send via WebSocket STOMP
-    sendMessage(conversationId, trimmed, tempMsg.clientMessageId, replyTo?.id, uploadIds);
+    const didSend = sendMessage(conversationId, trimmed, tempMsg.clientMessageId, replyToMessageId, messageUploadIds);
+    if (didSend) {
+      startAckTimer(tempMsg.clientMessageId);
+    } else {
+      markMessageFailedByClientMessageId(conversationId, tempMsg.clientMessageId);
+      updatePendingOutboundStatus(tempMsg.clientMessageId, 'failed');
+    }
     onClearReply?.();
     setTyping?.(conversationId, false);
   };

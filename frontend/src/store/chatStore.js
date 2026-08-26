@@ -1,12 +1,30 @@
 import { create } from 'zustand';
 
 export const TYPING_TIMEOUT_MS = 4000;
+export const MESSAGE_ACK_TIMEOUT_MS = 8000;
 const typingTimers = new Map();
+const ackTimers = new Map();
+
+const clearAckTimerByClientMessageId = (clientMessageId) => {
+  if (!clientMessageId) return;
+  const timer = ackTimers.get(clientMessageId);
+  if (timer) clearTimeout(timer);
+  ackTimers.delete(clientMessageId);
+};
+
+const clearAllAckTimers = () => {
+  ackTimers.forEach((timer) => clearTimeout(timer));
+  ackTimers.clear();
+};
+
+const createClientMessageId = () => (
+  globalThis.crypto?.randomUUID?.() || `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`
+);
 
 // Temporary message format to distinguish from real messages
 export const createTempMessage = (content, conversationId, senderId) => ({
   id: `temp-${Date.now()}`,
-  clientMessageId: `msg-${Date.now()}`,
+  clientMessageId: createClientMessageId(),
   conversationId,
   senderId,
   content,
@@ -33,6 +51,26 @@ const normalizeConversation = (conversation) => ({
   lastMessageId: conversation.lastMessageId ?? null,
   updatedAt: conversation.updatedAt ?? null
 });
+
+const sameId = (left, right) => Number(left) === Number(right);
+
+const normalizeMember = (member) => ({
+  ...member,
+  role: member.role ?? member.memberRole
+});
+
+const mergeMembers = (members = [], incomingMembers = []) => {
+  const byUserId = new Map();
+  members.forEach((member) => byUserId.set(Number(member.userId), normalizeMember(member)));
+  incomingMembers.forEach((member) => {
+    const key = Number(member.userId);
+    byUserId.set(key, {
+      ...(byUserId.get(key) || {}),
+      ...normalizeMember(member)
+    });
+  });
+  return [...byUserId.values()];
+};
 
 const sortConversations = (conversations) =>
   [...conversations].sort((a, b) => {
@@ -92,6 +130,7 @@ const useChatStore = create((set, get) => ({
   messages: {}, // { conversationId: [messages] }
   onlineUsers: {}, // { userId: { status, lastSeenAt } }
   typingUsers: {},
+  pendingOutbound: {}, // { clientMessageId: pending message metadata }
   
   setConversations: (conversations) => set((state) => {
     const merged = conversations.map((conversation) => {
@@ -170,6 +209,108 @@ const useChatStore = create((set, get) => ({
       Object.entries(state.messages).filter(([key]) => Number(key) !== Number(conversationId))
     )
   })),
+
+  applyGroupRealtimeEvent: (event, currentUserId) => set((state) => {
+    if (!event?.conversationId || !event?.type) return state;
+
+    const conversationId = event.conversationId;
+    const targetUserIds = event.targetUserIds || [];
+    const currentUserIsTarget = currentUserId != null
+      && targetUserIds.some((userId) => sameId(userId, currentUserId));
+    const removedForCurrentUser = currentUserIsTarget
+      && ['GROUP_MEMBER_REMOVED', 'GROUP_MEMBER_LEFT'].includes(event.type);
+
+    if (removedForCurrentUser) {
+      return {
+        conversations: state.conversations.filter((conversation) => !sameId(conversation.id, conversationId)),
+        activeConversation: sameId(state.activeConversation?.id, conversationId) ? null : state.activeConversation,
+        activeConversationDetail: sameId(state.activeConversationDetail?.id, conversationId) ? null : state.activeConversationDetail,
+        viewingConversationId: sameId(state.viewingConversationId, conversationId) ? null : state.viewingConversationId,
+        messages: Object.fromEntries(
+          Object.entries(state.messages).filter(([key]) => !sameId(key, conversationId))
+        )
+      };
+    }
+
+    const patch = {
+      type: 'groups_chat',
+      isGroup: true,
+      updatedAt: event.occurredAt || undefined
+    };
+
+    if (event.type === 'GROUP_NAME_UPDATED' && event.name != null) {
+      patch.name = event.name;
+    }
+
+    if (event.type === 'GROUP_AVATAR_UPDATED' && event.avatarUrl != null) {
+      patch.avatar = event.avatarUrl;
+    }
+
+    const conversations = state.conversations.some((conversation) => sameId(conversation.id, conversationId))
+      ? state.conversations.map((conversation) => (
+          sameId(conversation.id, conversationId)
+            ? normalizeConversation({
+                ...conversation,
+                ...patch,
+                updatedAt: patch.updatedAt ?? conversation.updatedAt
+              })
+            : conversation
+        ))
+      : [
+          ...state.conversations,
+          normalizeConversation({
+            id: conversationId,
+            name: event.name || `Conversation ${conversationId}`,
+            avatar: event.avatarUrl || null,
+            unread: 0,
+            type: 'groups_chat',
+            isGroup: true,
+            updatedAt: event.occurredAt || null
+          })
+        ];
+
+    const nextActiveConversation = sameId(state.activeConversation?.id, conversationId)
+      ? normalizeConversation({
+          ...state.activeConversation,
+          ...patch,
+          updatedAt: patch.updatedAt ?? state.activeConversation.updatedAt
+        })
+      : state.activeConversation;
+
+    const nextDetail = sameId(state.activeConversationDetail?.id, conversationId)
+      ? (() => {
+          const detailPatch = {};
+          if (event.type === 'GROUP_NAME_UPDATED' && event.name != null) detailPatch.name = event.name;
+          if (event.type === 'GROUP_AVATAR_UPDATED' && event.avatarUrl != null) detailPatch.avatarUrl = event.avatarUrl;
+
+          let members = state.activeConversationDetail.members || [];
+          if (event.type === 'GROUP_MEMBERS_ADDED') {
+            members = mergeMembers(members, event.members || []);
+          }
+          if (['GROUP_MEMBER_REMOVED', 'GROUP_MEMBER_LEFT'].includes(event.type)) {
+            members = members.filter((member) => !targetUserIds.some((userId) => sameId(userId, member.userId)));
+          }
+          if (event.type === 'GROUP_MEMBER_ROLE_UPDATED') {
+            members = mergeMembers(members, event.members || []);
+          }
+
+          const currentUserMember = members.find((member) => sameId(member.userId, currentUserId));
+
+          return {
+            ...state.activeConversationDetail,
+            ...detailPatch,
+            members,
+            currentUserRole: currentUserMember?.role ?? state.activeConversationDetail.currentUserRole
+          };
+        })()
+      : state.activeConversationDetail;
+
+    return {
+      conversations: sortConversations(conversations),
+      activeConversation: nextActiveConversation,
+      activeConversationDetail: nextDetail
+    };
+  }),
   
   setActiveConversation: (conversation) => set({ activeConversation: conversation }),
 
@@ -306,6 +447,82 @@ const useChatStore = create((set, get) => ({
       messages: {
         ...state.messages,
         [conversationId]: mergeMessageLists(prevMessages, [message])
+      }
+    };
+  }),
+
+  addPendingOutbound: (item) => set((state) => ({
+    pendingOutbound: {
+      ...state.pendingOutbound,
+      [item.clientMessageId]: {
+        ...item,
+        status: item.status ?? 'sending'
+      }
+    }
+  })),
+
+  removePendingOutbound: (clientMessageId) => {
+    clearAckTimerByClientMessageId(clientMessageId);
+    set((state) => {
+      const nextPending = { ...state.pendingOutbound };
+      delete nextPending[clientMessageId];
+      return { pendingOutbound: nextPending };
+    });
+  },
+
+  updatePendingOutboundStatus: (clientMessageId, status) => set((state) => {
+    if (!state.pendingOutbound[clientMessageId]) return state;
+    return {
+      pendingOutbound: {
+        ...state.pendingOutbound,
+        [clientMessageId]: {
+          ...state.pendingOutbound[clientMessageId],
+          status
+        }
+      }
+    };
+  }),
+
+  clearAckTimer: (clientMessageId) => {
+    clearAckTimerByClientMessageId(clientMessageId);
+  },
+
+  clearAllAckTimers: () => {
+    clearAllAckTimers();
+  },
+
+  clearPendingOutbound: () => {
+    clearAllAckTimers();
+    set({ pendingOutbound: {} });
+  },
+
+  startAckTimer: (clientMessageId) => {
+    clearAckTimerByClientMessageId(clientMessageId);
+    const timer = setTimeout(() => {
+      const pending = get().pendingOutbound[clientMessageId];
+      if (!pending) {
+        ackTimers.delete(clientMessageId);
+        return;
+      }
+
+      get().markMessageFailedByClientMessageId(pending.conversationId, clientMessageId);
+      get().updatePendingOutboundStatus(clientMessageId, 'failed');
+      ackTimers.delete(clientMessageId);
+    }, MESSAGE_ACK_TIMEOUT_MS);
+
+    ackTimers.set(clientMessageId, timer);
+  },
+
+  markMessageFailedByClientMessageId: (conversationId, clientMessageId) => set((state) => {
+    const prevMessages = state.messages[conversationId] || [];
+    return {
+      messages: {
+        ...state.messages,
+        [conversationId]: prevMessages.map((message) => (
+          message.clientMessageId === clientMessageId && message.status === 'sending'
+            ? { ...message, status: 'failed' }
+            : message
+        ))
       }
     };
   }),
