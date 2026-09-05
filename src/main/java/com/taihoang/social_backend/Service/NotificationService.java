@@ -23,4 +23,6 @@ public interface NotificationService {
     public void notifyPostMention(User actor, com.taihoang.social_backend.Entity.Post post, User mentionedUser);
     
     public void notifyStoryReaction(User actor, com.taihoang.social_backend.Entity.Story story);
+
+    public void notifySecurityLogin(User user, com.taihoang.social_backend.Entity.UserDevice userDevice);
 }

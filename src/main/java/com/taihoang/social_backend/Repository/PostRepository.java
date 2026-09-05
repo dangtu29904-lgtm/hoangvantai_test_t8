@@ -100,6 +100,66 @@ public interface PostRepository
 
             Pageable pageable
     );
+
+    @EntityGraph(attributePaths = "author")
+    @Query("""
+    select p
+    from Post p
+    where p.deleted = false
+      and exists (
+            select pm.id
+            from PostMedia pm
+            where pm.post.id = p.id
+              and pm.upload.attachmentType =
+                  com.taihoang.social_backend.Entity.AttachmentType.VIDEO
+      )
+      and (
+            p.author.id = :currentUserId
+
+            or p.privacy =
+                com.taihoang.social_backend.Entity.PostPrivacy.PUBLIC
+
+            or (
+                p.privacy =
+                    com.taihoang.social_backend.Entity.PostPrivacy.FRIENDS
+
+                and exists (
+                    select f.id
+                    from Friendship f
+                    where f.status =
+                        com.taihoang.social_backend.Entity.Friendship.FriendshipStatus.ACCEPTED
+
+                      and (
+                            (
+                                f.requester.id = :currentUserId
+                                and f.receiver.id = p.author.id
+                            )
+
+                            or
+
+                            (
+                                f.receiver.id = :currentUserId
+                                and f.requester.id = p.author.id
+                            )
+                      )
+                )
+            )
+      )
+      and not exists (
+            select hp.id
+            from HiddenPost hp
+            where hp.user.id = :currentUserId
+              and hp.post.id = p.id
+      )
+    order by p.createdAt desc, p.id desc
+""")
+    Page<Post> findVideoFeed(
+            @Param("currentUserId")
+            Long currentUserId,
+
+            Pageable pageable
+    );
+
     long countBySharedPost_IdAndDeletedFalse(
             Long postId
     );

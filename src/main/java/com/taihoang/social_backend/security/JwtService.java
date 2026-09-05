@@ -18,6 +18,7 @@ public class JwtService {
     private static final Base64.Decoder BASE64_URL_DECODER = Base64.getUrlDecoder();
     private static final Pattern SUBJECT_PATTERN = Pattern.compile("\"sub\"\\s*:\\s*\"([^\"]+)\"");
     private static final Pattern EXPIRATION_PATTERN = Pattern.compile("\"exp\"\\s*:\\s*(\\d+)");
+    private static final Pattern SESSION_ID_PATTERN = Pattern.compile("\"sid\"\\s*:\\s*(\\d+)");
 
     private final String secret;
     private final long expirationMs;
@@ -29,11 +30,17 @@ public class JwtService {
     }
 
     public String generateToken(String email, String role) {
+        return generateToken(email, role, null);
+    }
+
+    public String generateToken(String email, String role, Long userSessionId) {
         Instant now = Instant.now();
         long expiration = now.plusMillis(expirationMs).getEpochSecond();
         String header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
         String payload = "{\"sub\":\"" + escapeJson(email) + "\",\"role\":\"" + escapeJson(role)
-                + "\",\"iat\":" + now.getEpochSecond() + ",\"exp\":" + expiration + "}";
+                + "\",\"iat\":" + now.getEpochSecond() + ",\"exp\":" + expiration
+                + (userSessionId == null ? "" : ",\"sid\":" + userSessionId)
+                + "}";
 
         String unsignedToken = encode(header) + "." + encode(payload);
         return unsignedToken + "." + sign(unsignedToken);
@@ -44,6 +51,16 @@ public class JwtService {
             String payload = decodePayload(token);
             Matcher matcher = SUBJECT_PATTERN.matcher(payload);
             return matcher.find() ? matcher.group(1) : null;
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
+    public Long extractSessionId(String token) {
+        try {
+            String payload = decodePayload(token);
+            Matcher matcher = SESSION_ID_PATTERN.matcher(payload);
+            return matcher.find() ? Long.parseLong(matcher.group(1)) : null;
         } catch (IllegalArgumentException exception) {
             return null;
         }

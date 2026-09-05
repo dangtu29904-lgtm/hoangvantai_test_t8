@@ -1,5 +1,6 @@
 package com.taihoang.social_backend.configure;
 
+import com.taihoang.social_backend.Service.ChatObservabilityService;
 import com.taihoang.social_backend.Service.PresenceNotificationService;
 import com.taihoang.social_backend.Service.PresenceService;
 import com.taihoang.social_backend.security.AuthenticatedUserDetails;
@@ -17,6 +18,7 @@ import java.security.Principal;
 public class WebSocketPresenceListener {
     private final PresenceService presenceService;
     private final PresenceNotificationService presenceNotificationService;
+    private final ChatObservabilityService chatObservabilityService;
 
     @EventListener
     public void onSessionConnected(SessionConnectedEvent event) {
@@ -34,6 +36,7 @@ public class WebSocketPresenceListener {
         Long userId = extractUserId(principal);
         if (userId != null && sessionId != null && !sessionId.isBlank()) {
             boolean becameOnline = presenceService.markOnline(userId, sessionId);
+            chatObservabilityService.websocketConnected(userId, sessionId, becameOnline);
             if (becameOnline) {
                 presenceNotificationService.notifyContacts(presenceService.getPresence(userId));
             }
@@ -44,6 +47,7 @@ public class WebSocketPresenceListener {
         Long userId = extractUserId(principal);
         if (userId != null && sessionId != null && !sessionId.isBlank()) {
             boolean becameOffline = presenceService.markOffline(userId, sessionId);
+            chatObservabilityService.websocketDisconnected(userId, sessionId, becameOffline);
             if (becameOffline) {
                 presenceNotificationService.notifyContacts(presenceService.getPresence(userId));
             }

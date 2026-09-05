@@ -45,6 +45,14 @@ public class UserProfileServiceImpl implements UserProfileService {
             user.setBio(request.bio().trim());
         }
 
+        if (request.avatarUrl() != null) {
+            user.setAvatarUrl(normalizeNullableText(request.avatarUrl()));
+        }
+
+        if (request.coverUrl() != null) {
+            user.setCoverUrl(normalizeNullableText(request.coverUrl()));
+        }
+
         if (request.dateOfBirth() != null) {
             user.setDateOfBirth(request.dateOfBirth());
         }
@@ -129,6 +137,19 @@ public class UserProfileServiceImpl implements UserProfileService {
                                 "Khong tim thay user"
                         )
                 );
+    }
+
+    private String normalizeNullableText(String value) {
+
+        if (value == null) {
+            return null;
+        }
+
+        String normalized = value.trim();
+
+        return normalized.isEmpty()
+                ? null
+                : normalized;
     }
 
     private UserProfileResponse toUserProfileResponse(User user) {

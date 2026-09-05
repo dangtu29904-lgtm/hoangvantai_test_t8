@@ -1,5 +1,6 @@
 package com.taihoang.social_backend.security;
 
+import com.taihoang.social_backend.Service.UserSessionService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,10 +19,16 @@ import java.io.IOException;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
+    private final UserSessionService userSessionService;
 
-    public JwtAuthenticationFilter(JwtService jwtService, UserDetailsService userDetailsService) {
+    public JwtAuthenticationFilter(
+            JwtService jwtService,
+            UserDetailsService userDetailsService,
+            UserSessionService userSessionService
+    ) {
         this.jwtService = jwtService;
         this.userDetailsService = userDetailsService;
+        this.userSessionService = userSessionService;
     }
 
     @Override
@@ -39,7 +46,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             UserDetails userDetails = userDetailsService.loadUserByUsername(email);
-            if (userDetails.isEnabled() && jwtService.isTokenValid(jwt, userDetails)) {
+            Long sessionId = jwtService.extractSessionId(jwt);
+            boolean sessionValid = userDetails instanceof AuthenticatedUserDetails authenticatedUser
+                    && userSessionService.isAccessSessionValid(authenticatedUser.getId(), sessionId);
+
+            if (userDetails.isEnabled() && jwtService.isTokenValid(jwt, userDetails) && sessionValid) {
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                         userDetails,
                         null,

@@ -1,6 +1,8 @@
 package com.taihoang.social_backend.configure;
 
 import com.taihoang.social_backend.dto.ChatErrorResponse;
+import com.taihoang.social_backend.exception.ChatRateLimitException;
+import com.taihoang.social_backend.Service.ChatObservabilityService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.handler.annotation.MessageExceptionHandler;
@@ -16,6 +18,11 @@ import java.util.stream.Collectors;
 public class WebSocketExceptionHandler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WebSocketExceptionHandler.class);
+    private final ChatObservabilityService chatObservabilityService;
+
+    public WebSocketExceptionHandler(ChatObservabilityService chatObservabilityService) {
+        this.chatObservabilityService = chatObservabilityService;
+    }
 
     @MessageExceptionHandler(MethodArgumentNotValidException.class)
     @SendToUser(destinations = "/queue/errors", broadcast = false)
@@ -35,6 +42,7 @@ public class WebSocketExceptionHandler {
             message = "Du lieu gui len khong hop le";
         }
 
+        chatObservabilityService.websocketError("VALIDATION_ERROR", exception.getClass().getSimpleName());
         return createError("VALIDATION_ERROR", message);
     }
 
@@ -46,13 +54,29 @@ public class WebSocketExceptionHandler {
             message = "Yeu cau chat khong hop le";
         }
 
+        chatObservabilityService.websocketError("CHAT_REQUEST_FAILED", exception.getClass().getSimpleName());
         return createError("CHAT_REQUEST_FAILED", message);
+    }
+
+    @MessageExceptionHandler(ChatRateLimitException.class)
+    @SendToUser(destinations = "/queue/errors", broadcast = false)
+    public ChatErrorResponse handleRateLimit(ChatRateLimitException exception) {
+        chatObservabilityService.websocketError("RATE_LIMITED", exception.getClass().getSimpleName());
+        return new ChatErrorResponse(
+                "RATE_LIMITED",
+                exception.getMessage(),
+                Instant.now(),
+                exception.getClientMessageId(),
+                exception.getConversationId(),
+                exception.getRetryAfterSeconds()
+        );
     }
 
     @MessageExceptionHandler(Exception.class)
     @SendToUser(destinations = "/queue/errors", broadcast = false)
     public ChatErrorResponse handleUnexpectedError(Exception exception) {
         LOGGER.error("Unexpected WebSocket message handling error", exception);
+        chatObservabilityService.websocketError("INTERNAL_ERROR", exception.getClass().getSimpleName());
         return createError("INTERNAL_ERROR", "Co loi xay ra khi xu ly yeu cau chat");
     }
 

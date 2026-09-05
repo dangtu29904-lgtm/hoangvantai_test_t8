@@ -60,6 +60,8 @@ public class MessageService {
     private final MessengerStatusRepository messengerStatusRepository;
     private final MessageUserStateRepository messageUserStateRepository ;
     private final MessageReactionRepository messageReactionRepository ;
+    private final ChatRateLimiterService chatRateLimiterService;
+    private final ChatObservabilityService chatObservabilityService;
     private final ChatUploadRepository
             chatUploadRepository;
 
@@ -69,7 +71,7 @@ public class MessageService {
                           ConversationRepository conversationRepository,
                           ConversationMemberRepository conversationMemberRepository,
                           MessengerRepository messengerRepository,
-                          MessengerStatusRepository messengerStatusRepository, MessageUserStateRepository messageUserStateRepository, MessageReactionRepository messageReactionRepository, ChatUploadRepository chatUploadRepository, MessageAttachmentRepository messageAttachmentRepository) {
+                          MessengerStatusRepository messengerStatusRepository, MessageUserStateRepository messageUserStateRepository, MessageReactionRepository messageReactionRepository, ChatRateLimiterService chatRateLimiterService, ChatObservabilityService chatObservabilityService, ChatUploadRepository chatUploadRepository, MessageAttachmentRepository messageAttachmentRepository) {
         this.userRepository = userRepository;
         this.conversationRepository = conversationRepository;
         this.conversationMemberRepository = conversationMemberRepository;
@@ -77,6 +79,8 @@ public class MessageService {
         this.messengerStatusRepository = messengerStatusRepository;
         this.messageUserStateRepository = messageUserStateRepository;
         this.messageReactionRepository = messageReactionRepository;
+        this.chatRateLimiterService = chatRateLimiterService;
+        this.chatObservabilityService = chatObservabilityService;
         this.chatUploadRepository = chatUploadRepository;
         this.messageAttachmentRepository = messageAttachmentRepository;
     }
@@ -98,23 +102,36 @@ public class MessageService {
             throw new IllegalArgumentException("User khong thuoc conversation nay");
         }
 
-        return messengerRepository
+        Optional<Messenger> existingMessage = messengerRepository
                 .findByConversationIdAndUserIdAndClientMessageId(
                         conversation.getId(),
                         sender.getId(),
                         request.clientMessageId()
-                )
-                .map(message -> {List<MessageAttachment> attachments = messageAttachmentRepository.findByMessageIdWithUpload(message.getId());
-                    return new SendMessageResult(
-                            toResponse(
-                                    message,
-                                    attachments
-                            ),
-                            sender.getEmail(),
-                            List.of()
-                    );
-                })
-                .orElseGet(() -> createMessage(sender, conversation, request));
+                );
+
+        if (existingMessage.isPresent()) {
+            Messenger message = existingMessage.get();
+            List<MessageAttachment> attachments = messageAttachmentRepository.findByMessageIdWithUpload(message.getId());
+            chatObservabilityService.messageSendSuccess(
+                    sender.getId(),
+                    conversation.getId(),
+                    message.getId(),
+                    0,
+                    true
+            );
+            return new SendMessageResult(
+                    toResponse(
+                            message,
+                            attachments
+                    ),
+                    sender.getEmail(),
+                    List.of()
+            );
+        }
+
+        chatRateLimiterService.checkSendAllowed(sender.getId(), request);
+
+        return createMessage(sender, conversation, request);
     }
 
     @Transactional
@@ -126,6 +143,7 @@ public class MessageService {
                 .findByMessengerIdAndUserId(request.messageId(), recipient.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Khong tim thay status can delivered"));
 
+        boolean alreadyDelivered = status.getDeliveredAt() != null;
         if (status.getDeliveredAt() == null) {
             status.setDeliveredAt(LocalDateTime.now());
             messengerStatusRepository.save(status);
@@ -140,6 +158,14 @@ public class MessageService {
                 status.getDeliveredAt()
         );
 
+        chatObservabilityService.messageDelivered(
+                recipient.getId(),
+                messenger.getConversation().getId(),
+                messenger.getId(),
+                alreadyDelivered,
+                messenger.getSentAt()
+        );
+
         return new DeliveredResult(messenger.getUser().getEmail(), response);
     }
 
@@ -152,6 +178,7 @@ public class MessageService {
                 .findByMessengerIdAndUserId(request.messageId(), recipient.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Khong tim thay status can seen"));
 
+        boolean alreadySeen = status.getSeenAt() != null;
         if (status.getDeliveredAt() == null) {
             status.setDeliveredAt(LocalDateTime.now());
         }
@@ -173,6 +200,14 @@ public class MessageService {
                 recipient.getUserName(),
                 status.getDeliveredAt(),
                 status.getSeenAt()
+        );
+
+        chatObservabilityService.messageSeen(
+                recipient.getId(),
+                messenger.getConversation().getId(),
+                messenger.getId(),
+                alreadySeen,
+                messenger.getSentAt()
         );
 
         return new SeenResult(messenger.getUser().getEmail(), response);
@@ -221,6 +256,12 @@ public class MessageService {
         String senderDestination = statuses.isEmpty()
                 ? null
                 : statuses.get(0).getMessenger().getUser().getEmail();
+
+        chatObservabilityService.conversationSeen(
+                recipient.getId(),
+                request.conversationId(),
+                statuses.size()
+        );
 
         return new SeenConversationResult(senderDestination, response);
     }
@@ -300,6 +341,11 @@ public class MessageService {
                                 member.getUser().getEmail()
                         )
                         .toList();
+        chatObservabilityService.messageEdited(
+                currentUser.getId(),
+                savedMessage.getConversation().getId(),
+                savedMessage.getId()
+        );
         return new EditMessageResult(
                 response,
                 destinations
@@ -409,6 +455,14 @@ public class MessageService {
                         savedMessenger,
                         sender
                 );
+
+        chatObservabilityService.messageSendSuccess(
+                sender.getId(),
+                conversation.getId(),
+                savedMessenger.getId(),
+                recipientDestinations.size(),
+                false
+        );
 
 
         // ======================================
@@ -614,6 +668,7 @@ public class MessageService {
         // =================================
         // IDEMPOTENT
         // =================================
+        boolean alreadyRecalled = messenger.getRecalledAt() != null;
         if (messenger.getRecalledAt() == null) {
             messenger.setRecalledAt(
                     LocalDateTime.now()
@@ -642,6 +697,12 @@ public class MessageService {
                                         .getEmail()
                         )
                         .toList();
+        chatObservabilityService.messageRecalled(
+                currentUserId,
+                messenger.getConversation().getId(),
+                messenger.getId(),
+                alreadyRecalled
+        );
         return new RecallMessageResult(
                 response,
                 destinations
@@ -712,12 +773,19 @@ public class MessageService {
                             newState.setUser(currentUser);
                             return newState;
                         });
+        boolean alreadyDeletedForMe = state.getDeletedAt() != null;
         if (state.getDeletedAt() == null) {
             state.setDeletedAt(
                     LocalDateTime.now()
             );
             messageUserStateRepository.save(state);
         }
+        chatObservabilityService.messageDeletedForMe(
+                currentUserId,
+                conversationId,
+                messenger.getId(),
+                alreadyDeletedForMe
+        );
         return new DeleteMessageForMeResult(
                 currentUser.getEmail(),
                 new DeleteMessageForMeResponse(
@@ -907,6 +975,12 @@ public class MessageService {
                         )
                         .toList();
 
+        chatObservabilityService.messageReaction(
+                currentUser.getId(),
+                conversationId,
+                messenger.getId(),
+                action.name()
+        );
 
         return new MessageReactionResult(
                 response,
@@ -1182,6 +1256,12 @@ public class MessageService {
                                         .getEmail()
                         )
                         .toList();
+        chatObservabilityService.typing(
+                currentUser.getId(),
+                conversation.getId(),
+                request.typing(),
+                recipientDestinations.size()
+        );
         return new TypingResult(
                 response,
                 recipientDestinations

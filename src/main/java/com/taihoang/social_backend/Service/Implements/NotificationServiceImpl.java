@@ -2,7 +2,9 @@ package com.taihoang.social_backend.Service.Implements;
 
 import com.taihoang.social_backend.Entity.Notification;
 import com.taihoang.social_backend.Entity.User;
+import com.taihoang.social_backend.Entity.UserDevice;
 import com.taihoang.social_backend.Repository.NotificationRepository;
+import com.taihoang.social_backend.Repository.UserDeviceRepository;
 import com.taihoang.social_backend.Service.NotificationService;
 import com.taihoang.social_backend.dto.*;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class NotificationServiceImpl implements NotificationService {
     private final NotificationRepository notificationRepository;
     private final com.taihoang.social_backend.Repository.UserRepository userRepository;
+    private final UserDeviceRepository userDeviceRepository;
     private final ApplicationEventPublisher eventPublisher;
     @Override
     public NotificationListResponse getNotifications(
@@ -158,7 +161,25 @@ public class NotificationServiceImpl implements NotificationService {
             case STORY_REACTION ->
                     actorName
                             + " da bay to cam xuc ve tin cua ban";
+
+            case SECURITY_LOGIN ->
+                    buildSecurityLoginMessage(notification);
         };
+    }
+
+    private String buildSecurityLoginMessage(Notification notification) {
+        return userDeviceRepository
+                .findById(notification.getReferenceId())
+                .map(device -> {
+                    String deviceName = device.getDeviceName() == null
+                            ? "mot thiet bi moi"
+                            : device.getDeviceName();
+                    String ip = device.getLastIp() == null
+                            ? ""
+                            : " IP " + device.getLastIp();
+                    return "Tai khoan cua ban vua dang nhap tren " + deviceName + "." + ip;
+                })
+                .orElse("Tai khoan cua ban vua dang nhap tren mot thiet bi moi");
     }
     @Override
     public NotificationItemResponse
@@ -480,5 +501,21 @@ public class NotificationServiceImpl implements NotificationService {
                     saveAndPublishNotification(notification);
                 }
             );
+    }
+
+    @Override
+    @Transactional
+    public void notifySecurityLogin(User user, UserDevice userDevice) {
+        if (user == null || userDevice == null || userDevice.getId() == null) {
+            return;
+        }
+
+        Notification notification = new Notification();
+        notification.setReceiver(user);
+        notification.setActor(user);
+        notification.setType(Notification.NotificationType.SECURITY_LOGIN);
+        notification.setReferenceId(userDevice.getId());
+        notification.setRead(false);
+        saveAndPublishNotification(notification);
     }
 }

@@ -24,10 +24,50 @@ spring:
       ddl-auto: update
     show-sql: true
 
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
 app:
   jwt:
     secret: ${JWT_SECRET}
     expiration-ms: 86400000
+  refresh-token:
+    expiration-ms: 604800000
+  login-approval:
+    risk-threshold: 70
+    expiration-ms: 300000
+    otp:
+      email-enabled: ${LOGIN_OTP_EMAIL_ENABLED:false}
+      debug-enabled: ${LOGIN_OTP_DEBUG_ENABLED:true}
+  mail:
+    from: ${MAIL_FROM:}
+
+chat:
+  rate-limit:
+    messages-per-second: 5
+    messages-per-minute: 30
+    attachments-per-minute: 10
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME}

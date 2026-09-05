@@ -53,6 +53,10 @@ public class User {
     private List<Messenger> messengers ;
     @OneToMany(mappedBy = "user")
     private List<MessengerStatus> messengerStatuses ;
+    @OneToMany(mappedBy = "user")
+    private List<UserDevice> userDevices ;
+    @OneToMany(mappedBy = "user")
+    private List<UserSession> userSessions ;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)

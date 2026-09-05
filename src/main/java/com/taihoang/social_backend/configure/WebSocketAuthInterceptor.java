@@ -1,6 +1,8 @@
 package com.taihoang.social_backend.configure;
 
+import com.taihoang.social_backend.Service.UserSessionService;
 import com.taihoang.social_backend.security.JwtService;
+import com.taihoang.social_backend.security.AuthenticatedUserDetails;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Component;
 public class WebSocketAuthInterceptor implements ChannelInterceptor {
     private final JwtService jwtService;
     private final ObjectProvider<UserDetailsService> userDetailsServiceProvider;
+    private final UserSessionService userSessionService;
 
     @Override
     public Message<?> preSend(
@@ -52,8 +55,11 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
             UserDetailsService userDetailsService = userDetailsServiceProvider.getObject();
             UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+            Long sessionId = jwtService.extractSessionId(token);
+            boolean sessionValid = userDetails instanceof AuthenticatedUserDetails authenticatedUser
+                    && userSessionService.isAccessSessionValid(authenticatedUser.getId(), sessionId);
 
-            if (!jwtService.isTokenValid(token, userDetails)) {
+            if (!jwtService.isTokenValid(token, userDetails) || !sessionValid) {
                 throw new IllegalArgumentException(
                         "Invalid JWT token"
                 );

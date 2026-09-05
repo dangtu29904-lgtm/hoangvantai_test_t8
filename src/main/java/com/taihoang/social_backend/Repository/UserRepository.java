@@ -44,7 +44,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("SELECT COUNT(u) FROM User u WHERE u.creatAt >= :start AND u.creatAt < :end")
     long countByCreatedAtBetween(@Param("start") java.time.LocalDate start, @Param("end") java.time.LocalDate end);
 
-    @Query(value = "SELECT creat_at AS date, COUNT(*) AS count FROM user WHERE creat_at >= :start AND creat_at < :end GROUP BY creat_at ORDER BY creat_at", nativeQuery = true)
+    @Query(value = "SELECT create_at AS date, COUNT(*) AS count FROM user WHERE create_at >= :start AND create_at < :end GROUP BY create_at ORDER BY create_at", nativeQuery = true)
     java.util.List<com.taihoang.social_backend.dto.statistics.DailyCountProjection> countDailyGrowth(
             @Param("start") java.time.LocalDate start,
             @Param("end") java.time.LocalDate end

@@ -113,6 +113,8 @@ public class Notification {
         
         POST_MENTION,
         
-        STORY_REACTION
+        STORY_REACTION,
+
+        SECURITY_LOGIN
     }
 }

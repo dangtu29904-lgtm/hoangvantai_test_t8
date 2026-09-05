@@ -14,6 +14,12 @@ public record UpdateProfileRequest(
         @Size(max = 500)
         String bio,
 
+        @Size(max = 500)
+        String avatarUrl,
+
+        @Size(max = 500)
+        String coverUrl,
+
         @Past
         LocalDate dateOfBirth,
 

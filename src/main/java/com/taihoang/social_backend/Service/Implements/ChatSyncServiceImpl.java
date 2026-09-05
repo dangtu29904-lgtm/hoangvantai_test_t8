@@ -4,6 +4,7 @@ import com.taihoang.social_backend.Entity.*;
 import com.taihoang.social_backend.Repository.MessageAttachmentRepository;
 import com.taihoang.social_backend.Repository.MessageReactionRepository;
 import com.taihoang.social_backend.Repository.MessengerStatusRepository;
+import com.taihoang.social_backend.Service.ChatObservabilityService;
 import com.taihoang.social_backend.Service.ChatSyncService;
 import com.taihoang.social_backend.dto.*;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,7 @@ public class ChatSyncServiceImpl implements ChatSyncService {
     private final MessengerStatusRepository messengerStatusRepository;
     private final MessageReactionRepository messageReactionRepository ;
     private final MessageAttachmentRepository messageAttachmentRepository;
+    private final ChatObservabilityService chatObservabilityService;
 
     /**
      * Lay nhung tin nhan ma thiet bi cua user chua xac nhan delivered.
@@ -118,6 +120,7 @@ public class ChatSyncServiceImpl implements ChatSyncService {
                         .toList();
 
         Long nextAfterMessageId = buildNextAfterMessageId(pageStatuses, hasMore);
+        chatObservabilityService.offlineSync(currentUserId, items.size(), hasMore);
         return new ChatSyncResponse(items, nextAfterMessageId, hasMore);
     }
 

@@ -485,6 +485,54 @@ public class PostServiceImpl
                 postPage.getTotalPages()
         );
     }
+
+    @Override
+    @Transactional
+    public PostListResponse getVideoFeed(
+            Long currentUserId,
+            int page,
+            int limit
+    ) {
+
+        if (page < 0) {
+            throw new IllegalArgumentException(
+                    "Page khong hop le"
+            );
+        }
+
+        if (limit <= 0 || limit > 100) {
+            throw new IllegalArgumentException(
+                    "Limit phai nam trong khoang 1 den 100"
+            );
+        }
+
+        Pageable pageable =
+                PageRequest.of(
+                        page,
+                        limit
+                );
+
+        Page<Post> postPage =
+                postRepository.findVideoFeed(
+                        currentUserId,
+                        pageable
+                );
+
+        List<PostResponse> items =
+                postPage.getContent()
+                        .stream()
+                        .map(post -> postResponseMapper.toResponse(currentUserId, post))
+                        .toList();
+
+        return new PostListResponse(
+                items,
+                page,
+                limit,
+                postPage.getTotalElements(),
+                postPage.getTotalPages()
+        );
+    }
+
     private List<Long> normalizeMediaIds(
             List<Long> mediaIds
     ) {

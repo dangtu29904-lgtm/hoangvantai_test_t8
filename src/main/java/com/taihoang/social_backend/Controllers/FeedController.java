@@ -60,6 +60,46 @@ public class FeedController {
             );
         }
     }
+
+    @GetMapping("/videos")
+    public PostListResponse getVideoFeed(
+
+            @AuthenticationPrincipal
+            AuthenticatedUserDetails currentUser,
+
+            @RequestParam(defaultValue = "0")
+            int page,
+
+            @RequestParam(defaultValue = "20")
+            int limit
+    ) {
+
+        if (currentUser == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Chua dang nhap"
+            );
+        }
+
+        try {
+
+            return postService.getVideoFeed(
+                    currentUser.getId(),
+                    page,
+                    limit
+            );
+
+        } catch (IllegalArgumentException exception) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    exception.getMessage(),
+                    exception
+            );
+        }
+    }
+
     @PostMapping("/{postId}/reactions")
     public ReactionResponse reactToPost(
 
