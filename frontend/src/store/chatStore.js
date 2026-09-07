@@ -6,6 +6,11 @@ const typingTimers = new Map();
 const ackTimers = new Map();
 const inFlightClientMessageIds = new Set();
 const inFlightClientMessageAttempts = new Map();
+const inFlightDeliveredMessageIds = new Set();
+const PENDING_OUTBOUND_STORAGE_PREFIX = 'socially.chat.pendingOutbound';
+const PENDING_DELIVERED_STORAGE_PREFIX = 'socially.chat.pendingDelivered';
+const PENDING_OUTBOUND_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const PENDING_DELIVERED_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const clearAckTimerByClientMessageId = (clientMessageId) => {
   if (!clientMessageId) return;
@@ -24,21 +29,233 @@ const clearAllInFlightClientMessageIds = () => {
   inFlightClientMessageAttempts.clear();
 };
 
+const clearAllInFlightDeliveredMessageIds = () => {
+  inFlightDeliveredMessageIds.clear();
+};
+
 const createClientMessageId = () => (
   globalThis.crypto?.randomUUID?.() || `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`
 );
 
 // Temporary message format to distinguish from real messages
-export const createTempMessage = (content, conversationId, senderId) => ({
+export const createTempMessage = (content, conversationId, senderId, status = 'sending') => ({
   id: `temp-${Date.now()}`,
   clientMessageId: createClientMessageId(),
   conversationId,
   senderId,
   content,
-  status: 'sending',
+  status,
   sentAt: new Date().toISOString(),
   isTemp: true
 });
+
+const getPendingOutboundStorageKey = (userId) => (
+  userId == null ? null : `${PENDING_OUTBOUND_STORAGE_PREFIX}:${userId}`
+);
+
+const getPendingDeliveredStorageKey = (userId) => (
+  userId == null ? null : `${PENDING_DELIVERED_STORAGE_PREFIX}:${userId}`
+);
+
+const getBrowserStorage = () => {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+};
+
+const normalizePendingOutboundItem = (item) => {
+  if (!item?.clientMessageId || !item?.conversationId) return null;
+
+  const createdAt = item.createdAt || item.sentAt || new Date().toISOString();
+  const createdAtTime = Date.parse(createdAt);
+  if (!Number.isNaN(createdAtTime) && Date.now() - createdAtTime > PENDING_OUTBOUND_MAX_AGE_MS) {
+    return null;
+  }
+
+  return {
+    conversationId: item.conversationId,
+    clientMessageId: item.clientMessageId,
+    content: item.content ?? '',
+    replyToMessageId: item.replyToMessageId ?? null,
+    replyTo: item.replyTo ?? null,
+    uploadIds: Array.isArray(item.uploadIds) ? item.uploadIds : [],
+    attachments: Array.isArray(item.attachments) ? item.attachments : [],
+    senderId: item.senderId ?? null,
+    status: ['queued', 'sending', 'failed'].includes(item.status) ? item.status : 'queued',
+    createdAt,
+    tempId: item.tempId || `temp-${item.clientMessageId}`,
+    errorMessage: item.errorMessage ?? null
+  };
+};
+
+const normalizePendingOutboundMap = (items) => {
+  const list = Array.isArray(items) ? items : Object.values(items || {});
+  return Object.fromEntries(
+    list
+      .map(normalizePendingOutboundItem)
+      .filter(Boolean)
+      .map((item) => [item.clientMessageId, item])
+  );
+};
+
+const normalizePendingDeliveredItem = (item) => {
+  if (!item?.messageId || !item?.conversationId) return null;
+
+  const receivedAt = item.receivedAt || new Date().toISOString();
+  const receivedAtTime = Date.parse(receivedAt);
+  if (!Number.isNaN(receivedAtTime) && Date.now() - receivedAtTime > PENDING_DELIVERED_MAX_AGE_MS) {
+    return null;
+  }
+
+  return {
+    messageId: item.messageId,
+    conversationId: item.conversationId,
+    receivedAt,
+    attempt: Number.isFinite(Number(item.attempt)) ? Number(item.attempt) : 0
+  };
+};
+
+const normalizePendingDeliveredMap = (items) => {
+  const list = Array.isArray(items) ? items : Object.values(items || {});
+  return Object.fromEntries(
+    list
+      .map(normalizePendingDeliveredItem)
+      .filter(Boolean)
+      .map((item) => [String(item.messageId), item])
+  );
+};
+
+const loadPendingOutboundFromStorage = (userId) => {
+  const storage = getBrowserStorage();
+  const key = getPendingOutboundStorageKey(userId);
+  if (!storage || !key) return {};
+
+  try {
+    const raw = storage.getItem(key);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    return normalizePendingOutboundMap(parsed.items || parsed.pendingOutbound || parsed);
+  } catch (error) {
+    console.warn('[chat pendingOutbound] cannot load persisted queue', error);
+    return {};
+  }
+};
+
+const loadPendingDeliveredFromStorage = (userId) => {
+  const storage = getBrowserStorage();
+  const key = getPendingDeliveredStorageKey(userId);
+  if (!storage || !key) return {};
+
+  try {
+    const raw = storage.getItem(key);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    return normalizePendingDeliveredMap(parsed.items || parsed.pendingDelivered || parsed);
+  } catch (error) {
+    console.warn('[chat pendingDelivered] cannot load persisted queue', error);
+    return {};
+  }
+};
+
+const persistPendingOutboundForUser = (userId, pendingOutbound) => {
+  const storage = getBrowserStorage();
+  const key = getPendingOutboundStorageKey(userId);
+  if (!storage || !key) return;
+
+  try {
+    const items = Object.values(pendingOutbound || {});
+    if (items.length === 0) {
+      storage.removeItem(key);
+      return;
+    }
+
+    storage.setItem(key, JSON.stringify({
+      version: 1,
+      savedAt: new Date().toISOString(),
+      items
+    }));
+  } catch (error) {
+    console.warn('[chat pendingOutbound] cannot persist queue', error);
+  }
+};
+
+const persistPendingDeliveredForUser = (userId, pendingDelivered) => {
+  const storage = getBrowserStorage();
+  const key = getPendingDeliveredStorageKey(userId);
+  if (!storage || !key) return;
+
+  try {
+    const items = Object.values(pendingDelivered || {});
+    if (items.length === 0) {
+      storage.removeItem(key);
+      return;
+    }
+
+    storage.setItem(key, JSON.stringify({
+      version: 1,
+      savedAt: new Date().toISOString(),
+      items
+    }));
+  } catch (error) {
+    console.warn('[chat pendingDelivered] cannot persist queue', error);
+  }
+};
+
+const removePendingOutboundStorageForUser = (userId) => {
+  const storage = getBrowserStorage();
+  const key = getPendingOutboundStorageKey(userId);
+  if (!storage || !key) return;
+
+  try {
+    storage.removeItem(key);
+  } catch (error) {
+    console.warn('[chat pendingOutbound] cannot remove persisted queue', error);
+  }
+};
+
+const removePendingDeliveredStorageForUser = (userId) => {
+  const storage = getBrowserStorage();
+  const key = getPendingDeliveredStorageKey(userId);
+  if (!storage || !key) return;
+
+  try {
+    storage.removeItem(key);
+  } catch (error) {
+    console.warn('[chat pendingDelivered] cannot remove persisted queue', error);
+  }
+};
+
+const pendingOutboundItemToTempMessage = (item) => ({
+  id: item.tempId || `temp-${item.clientMessageId}`,
+  clientMessageId: item.clientMessageId,
+  conversationId: item.conversationId,
+  senderId: item.senderId,
+  content: item.content,
+  status: item.status === 'sending' ? 'queued' : item.status,
+  sentAt: item.createdAt,
+  isTemp: true,
+  attachments: item.attachments || [],
+  replyTo: item.replyTo || null,
+  errorMessage: item.errorMessage || null
+});
+
+const mergePendingOutboundIntoMessages = (messages, pendingOutbound) => {
+  const nextMessages = { ...messages };
+
+  Object.values(pendingOutbound || {}).forEach((item) => {
+    const conversationId = item.conversationId;
+    const localMessages = nextMessages[conversationId] || [];
+    nextMessages[conversationId] = mergeMessageLists(localMessages, [
+      pendingOutboundItemToTempMessage(item)
+    ]);
+  });
+
+  return nextMessages;
+};
 
 const toTimestamp = (value) => {
   if (!value) return 0;
@@ -161,6 +378,10 @@ const useChatStore = create((set, get) => ({
   typingUsers: {},
   pendingOutbound: {}, // { clientMessageId: pending message metadata }
   inFlightOutbound: {}, // { clientMessageId: true }
+  pendingOutboundOwnerId: null,
+  pendingDelivered: {}, // { messageId: delivered ack metadata }
+  deliveredInFlight: {}, // { messageId: true }
+  pendingDeliveredOwnerId: null,
   
   setConversations: (conversations) => set((state) => {
     const merged = conversations.map((conversation) => {
@@ -490,15 +711,52 @@ const useChatStore = create((set, get) => ({
     };
   }),
 
-  addPendingOutbound: (item) => set((state) => ({
-    pendingOutbound: {
+  hydratePendingOutboundForUser: (userId) => {
+    clearAllAckTimers();
+    clearAllInFlightClientMessageIds();
+
+    const pendingOutbound = loadPendingOutboundFromStorage(userId);
+    const queuedPending = Object.fromEntries(
+      Object.entries(pendingOutbound).map(([clientMessageId, item]) => [
+        clientMessageId,
+        { ...item, status: item.status === 'sending' ? 'queued' : item.status }
+      ])
+    );
+
+    set((state) => ({
+      pendingOutboundOwnerId: userId,
+      pendingOutbound: queuedPending,
+      inFlightOutbound: {},
+      messages: mergePendingOutboundIntoMessages(state.messages, queuedPending)
+    }));
+  },
+
+  hydratePendingDeliveredForUser: (userId) => {
+    clearAllInFlightDeliveredMessageIds();
+    const pendingDelivered = loadPendingDeliveredFromStorage(userId);
+
+    set({
+      pendingDeliveredOwnerId: userId,
+      pendingDelivered,
+      deliveredInFlight: {}
+    });
+  },
+
+  addPendingOutbound: (item) => set((state) => {
+    const normalizedItem = normalizePendingOutboundItem(item);
+    if (!normalizedItem) return state;
+
+    const nextPending = {
       ...state.pendingOutbound,
-      [item.clientMessageId]: {
-        ...item,
-        status: item.status ?? 'sending'
+      [normalizedItem.clientMessageId]: {
+        ...normalizedItem,
+        status: normalizedItem.status ?? 'sending'
       }
-    }
-  })),
+    };
+
+    persistPendingOutboundForUser(state.pendingOutboundOwnerId, nextPending);
+    return { pendingOutbound: nextPending };
+  }),
 
   beginOutboundInFlight: (clientMessageId, attemptKey = null) => {
     if (!clientMessageId || inFlightClientMessageIds.has(clientMessageId)) return false;
@@ -549,20 +807,97 @@ const useChatStore = create((set, get) => ({
     set((state) => {
       const nextPending = { ...state.pendingOutbound };
       delete nextPending[clientMessageId];
+      persistPendingOutboundForUser(state.pendingOutboundOwnerId, nextPending);
       return { pendingOutbound: nextPending };
     });
   },
 
-  updatePendingOutboundStatus: (clientMessageId, status) => set((state) => {
-    if (!state.pendingOutbound[clientMessageId]) return state;
-    return {
-      pendingOutbound: {
-        ...state.pendingOutbound,
-        [clientMessageId]: {
-          ...state.pendingOutbound[clientMessageId],
-          status
-        }
+  addPendingDelivered: (item) => set((state) => {
+    const normalizedItem = normalizePendingDeliveredItem(item);
+    if (!normalizedItem) return state;
+
+    const key = String(normalizedItem.messageId);
+    const existing = state.pendingDelivered[key];
+    const nextPending = {
+      ...state.pendingDelivered,
+      [key]: existing
+        ? { ...existing, conversationId: normalizedItem.conversationId }
+        : normalizedItem
+    };
+
+    persistPendingDeliveredForUser(state.pendingDeliveredOwnerId, nextPending);
+    return { pendingDelivered: nextPending };
+  }),
+
+  removePendingDelivered: (messageId) => {
+    if (!messageId) return;
+    get().clearDeliveredInFlight(messageId);
+    set((state) => {
+      const key = String(messageId);
+      if (!state.pendingDelivered[key]) return state;
+      const nextPending = { ...state.pendingDelivered };
+      delete nextPending[key];
+      persistPendingDeliveredForUser(state.pendingDeliveredOwnerId, nextPending);
+      return { pendingDelivered: nextPending };
+    });
+  },
+
+  beginDeliveredInFlight: (messageId) => {
+    if (!messageId || inFlightDeliveredMessageIds.has(String(messageId))) return false;
+    const key = String(messageId);
+    inFlightDeliveredMessageIds.add(key);
+    set((state) => ({
+      deliveredInFlight: {
+        ...state.deliveredInFlight,
+        [key]: { startedAt: new Date().toISOString() }
       }
+    }));
+    return true;
+  },
+
+  clearDeliveredInFlight: (messageId) => {
+    if (!messageId) return;
+    const key = String(messageId);
+    inFlightDeliveredMessageIds.delete(key);
+    set((state) => {
+      if (!state.deliveredInFlight[key]) return state;
+      const nextInFlight = { ...state.deliveredInFlight };
+      delete nextInFlight[key];
+      return { deliveredInFlight: nextInFlight };
+    });
+  },
+
+  incrementPendingDeliveredAttempt: (messageId) => set((state) => {
+    const key = String(messageId);
+    const pending = state.pendingDelivered[key];
+    if (!pending) return state;
+
+    const nextPending = {
+      ...state.pendingDelivered,
+      [key]: {
+        ...pending,
+        attempt: (pending.attempt ?? 0) + 1
+      }
+    };
+
+    persistPendingDeliveredForUser(state.pendingDeliveredOwnerId, nextPending);
+    return { pendingDelivered: nextPending };
+  }),
+
+  updatePendingOutboundStatus: (clientMessageId, status, errorMessage = null) => set((state) => {
+    if (!state.pendingOutbound[clientMessageId]) return state;
+    const nextPending = {
+      ...state.pendingOutbound,
+      [clientMessageId]: {
+        ...state.pendingOutbound[clientMessageId],
+        status,
+        errorMessage
+      }
+    };
+
+    persistPendingOutboundForUser(state.pendingOutboundOwnerId, nextPending);
+    return {
+      pendingOutbound: nextPending
     };
   }),
 
@@ -575,9 +910,53 @@ const useChatStore = create((set, get) => ({
   },
 
   clearPendingOutbound: () => {
+    const ownerId = get().pendingOutboundOwnerId;
     clearAllAckTimers();
     clearAllInFlightClientMessageIds();
-    set({ pendingOutbound: {}, inFlightOutbound: {} });
+    removePendingOutboundStorageForUser(ownerId);
+    set({ pendingOutbound: {}, inFlightOutbound: {}, pendingOutboundOwnerId: null });
+  },
+
+  clearPendingDelivered: () => {
+    const ownerId = get().pendingDeliveredOwnerId;
+    clearAllInFlightDeliveredMessageIds();
+    removePendingDeliveredStorageForUser(ownerId);
+    set({ pendingDelivered: {}, deliveredInFlight: {}, pendingDeliveredOwnerId: null });
+  },
+
+  pausePendingOutbound: () => {
+    clearAllAckTimers();
+    clearAllInFlightClientMessageIds();
+    set((state) => {
+      const nextPending = Object.fromEntries(
+        Object.entries(state.pendingOutbound).map(([clientMessageId, item]) => [
+          clientMessageId,
+          { ...item, status: item.status === 'sending' ? 'queued' : item.status }
+        ])
+      );
+      const nextMessages = Object.fromEntries(
+        Object.entries(state.messages).map(([conversationId, messages]) => [
+          conversationId,
+          messages.map((message) => (
+            message.isTemp && message.status === 'sending'
+              ? { ...message, status: 'queued' }
+              : message
+          ))
+        ])
+      );
+
+      persistPendingOutboundForUser(state.pendingOutboundOwnerId, nextPending);
+      return {
+        pendingOutbound: nextPending,
+        inFlightOutbound: {},
+        messages: nextMessages
+      };
+    });
+  },
+
+  pausePendingDelivered: () => {
+    clearAllInFlightDeliveredMessageIds();
+    set({ deliveredInFlight: {} });
   },
 
   startAckTimer: (clientMessageId) => {
@@ -599,14 +978,28 @@ const useChatStore = create((set, get) => ({
     ackTimers.set(clientMessageId, timer);
   },
 
-  markMessageFailedByClientMessageId: (conversationId, clientMessageId) => set((state) => {
+  markMessageFailedByClientMessageId: (conversationId, clientMessageId, errorMessage = null) => set((state) => {
     const prevMessages = state.messages[conversationId] || [];
     return {
       messages: {
         ...state.messages,
         [conversationId]: prevMessages.map((message) => (
-          message.clientMessageId === clientMessageId && message.status === 'sending'
-            ? { ...message, status: 'failed' }
+          message.clientMessageId === clientMessageId && ['queued', 'sending'].includes(message.status)
+            ? { ...message, status: 'failed', errorMessage }
+            : message
+        ))
+      }
+    };
+  }),
+
+  markMessageQueuedByClientMessageId: (conversationId, clientMessageId) => set((state) => {
+    const prevMessages = state.messages[conversationId] || [];
+    return {
+      messages: {
+        ...state.messages,
+        [conversationId]: prevMessages.map((message) => (
+          message.clientMessageId === clientMessageId
+            ? { ...message, status: 'queued', errorMessage: null }
             : message
         ))
       }
@@ -620,7 +1013,7 @@ const useChatStore = create((set, get) => ({
         ...state.messages,
         [conversationId]: prevMessages.map((message) => (
           message.clientMessageId === clientMessageId
-            ? { ...message, status: 'sending' }
+            ? { ...message, status: 'sending', errorMessage: null }
             : message
         ))
       }

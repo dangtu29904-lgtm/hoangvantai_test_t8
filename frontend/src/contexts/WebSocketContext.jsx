@@ -2,8 +2,12 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { useAuth } from './AuthContext';
 import { wsService } from '../services/websocket/stompClient';
 import useChatStore from '../store/chatStore';
-import { chatApi } from '../services/api';
+import { chatApi, securityApi } from '../services/api';
 import { resendPendingMessagesAfterReconnect } from '../services/websocket/chatReliability';
+import {
+  flushPendingDeliveredAcks,
+  queueAndSendDeliveredAck
+} from '../services/websocket/deliveredReliability';
 import {
   getSyncRetryDelayMs,
   isRetryableSyncError,
@@ -37,6 +41,58 @@ const normalizeIncomingMessage = (message) => ({
   status: message.seenAt ? 'seen' : message.deliveredAt ? 'delivered' : message.status ?? 'sent'
 });
 
+const LoginApprovalPrompt = ({ request, loading, onApprove, onReject, onClose }) => (
+  <div className="fixed right-5 top-20 z-[70] w-[360px] overflow-hidden rounded-2xl border border-[#3e4042] bg-[#242526] text-[#e4e6eb] shadow-2xl">
+    <div className="border-b border-[#3e4042] px-4 py-3">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#8ab4f8]">Security login</p>
+      <h3 className="mt-1 text-lg font-black text-white">Thiet bi moi muon dang nhap</h3>
+    </div>
+    <div className="space-y-3 p-4 text-sm">
+      <p className="leading-6 text-[#b0b3b8]">
+        Co yeu cau dang nhap tu <span className="font-bold text-white">{request.deviceName || 'thiet bi moi'}</span>.
+        Hay chi cho phep neu day la ban.
+      </p>
+      <div className="rounded-xl bg-[#18191a] p-3">
+        <div className="flex items-center justify-between">
+          <span>Risk score</span>
+          <strong className="text-amber-300">{request.riskScore}</strong>
+        </div>
+        <div className="mt-2 flex items-center justify-between">
+          <span>Browser</span>
+          <strong>{request.browser || 'Unknown'}</strong>
+        </div>
+        <div className="mt-2 flex items-center justify-between">
+          <span>OS</span>
+          <strong>{request.os || 'Unknown'}</strong>
+        </div>
+        <div className="mt-2 flex items-center justify-between">
+          <span>IP</span>
+          <strong>{request.ipAddress || 'Unknown'}</strong>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={onReject}
+          disabled={loading}
+          className="rounded-xl bg-[#3a3b3c] px-4 py-2.5 font-bold text-white transition hover:bg-rose-500 disabled:opacity-50"
+        >
+          Tu choi
+        </button>
+        <button
+          onClick={onApprove}
+          disabled={loading}
+          className="rounded-xl bg-[#1877f2] px-4 py-2.5 font-bold text-white transition hover:bg-[#166fe5] disabled:opacity-50"
+        >
+          Cho phep
+        </button>
+      </div>
+      <button onClick={onClose} className="w-full rounded-xl px-4 py-2 text-xs font-semibold text-[#b0b3b8] hover:bg-[#3a3b3c]">
+        De sau
+      </button>
+    </div>
+  </div>
+);
+
 const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }) => {
   const { user } = useAuth();
   const addMessage = useChatStore(state => state.addMessage);
@@ -45,6 +101,8 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
   const clearOutboundInFlight = useChatStore(state => state.clearOutboundInFlight);
   const removePendingOutbound = useChatStore(state => state.removePendingOutbound);
   const updateMessageStatus = useChatStore(state => state.updateMessageStatus);
+  const updatePendingOutboundStatus = useChatStore(state => state.updatePendingOutboundStatus);
+  const markMessageFailedByClientMessageId = useChatStore(state => state.markMessageFailedByClientMessageId);
   const updateConversationFromMessage = useChatStore(state => state.updateConversationFromMessage);
   const markConversationSeen = useChatStore(state => state.markConversationSeen);
   const applyGroupRealtimeEvent = useChatStore(state => state.applyGroupRealtimeEvent);
@@ -54,6 +112,8 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
   const isResendingPendingRef = useRef(false);
   const syncRetryWaitRef = useRef(null);
   const syncMountedRef = useRef(true);
+  const [loginApprovals, setLoginApprovals] = useState([]);
+  const [approvalActionLoading, setApprovalActionLoading] = useState(false);
 
   const cancelSyncRetryWait = useCallback(() => {
     const pendingWait = syncRetryWaitRef.current;
@@ -117,14 +177,17 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
         resetUnread: isViewingConversation
       });
 
-      if (!isOwnMessage) {
-        wsService.send('/app/chat.delivered', { messageId: msg.id });
-      }
-
       if (isViewingConversation && source === 'realtime') {
         wsService.send('/app/chat.seenConversation', { conversationId });
         markConversationSeen(conversationId);
       }
+    }
+
+    if (!isOwnMessage) {
+      queueAndSendDeliveredAck(msg, user?.id, {
+        wsService,
+        isConnected: () => Boolean(wsService.isConnected?.())
+      });
     }
 
     return !isDuplicate;
@@ -175,6 +238,31 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
       if (event?.conversationId && event?.userId) {
         useChatStore.getState().setTyping(event.conversationId, event.userId, event.typing);
       }
+    };
+    const handleChatError = (error) => {
+      if (!error?.clientMessageId) {
+        console.warn('[chat] websocket error', error);
+        return;
+      }
+
+      const store = useChatStore.getState();
+      const pending = store.pendingOutbound[error.clientMessageId];
+      const conversationId = error.conversationId ?? pending?.conversationId;
+
+      store.clearAckTimer(error.clientMessageId);
+      store.clearOutboundInFlight(error.clientMessageId);
+
+      if (conversationId) {
+        markMessageFailedByClientMessageId(conversationId, error.clientMessageId, error.message);
+      }
+      updatePendingOutboundStatus(error.clientMessageId, 'failed', error.message);
+    };
+    const handleLoginApproval = (event) => {
+      if (!event?.approvalRequestId) return;
+      setLoginApprovals((current) => {
+        const exists = current.some((item) => item.approvalRequestId === event.approvalRequestId);
+        return exists ? current : [event, ...current].slice(0, 3);
+      });
     };
     const handleConversationEvent = async (event) => {
       if (!event?.conversationId) return;
@@ -236,6 +324,8 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
     wsService.subscribe('/user/queue/messages.reaction', handleReaction);
     wsService.subscribe('/user/queue/chat.typing', handleTyping);
     wsService.subscribe('/user/queue/conversations.events', handleConversationEvent);
+    wsService.subscribe('/user/queue/errors', handleChatError);
+    wsService.subscribe('/user/queue/security.login-approvals', handleLoginApproval);
 
     return () => {
       wsService.unsubscribe('/user/queue/messages', handleNewMessage);
@@ -249,15 +339,17 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
       wsService.unsubscribe('/user/queue/messages.reaction', handleReaction);
       wsService.unsubscribe('/user/queue/chat.typing', handleTyping);
       wsService.unsubscribe('/user/queue/conversations.events', handleConversationEvent);
+      wsService.unsubscribe('/user/queue/errors', handleChatError);
+      wsService.unsubscribe('/user/queue/security.login-approvals', handleLoginApproval);
     };
-  }, [isConnected, user, processIncomingMessage, clearAckTimer, clearOutboundInFlight, confirmMessage, removePendingOutbound, updateConversationFromMessage, updateMessageStatus, applyGroupRealtimeEvent, wsService]);
+  }, [isConnected, user, processIncomingMessage, clearAckTimer, clearOutboundInFlight, confirmMessage, removePendingOutbound, updateConversationFromMessage, updateMessageStatus, updatePendingOutboundStatus, markMessageFailedByClientMessageId, applyGroupRealtimeEvent, wsService]);
 
   useEffect(() => {
     if (connectCount === 0 || !user || !isConnected) return;
 
     const resendPendingAfterReconnect = async () => {
       const currentAttemptKey = wsService.connectCount ?? connectCount;
-      if (currentAttemptKey <= 1 || isResendingPendingRef.current) return;
+      if (isResendingPendingRef.current) return;
       if (!wsService.isConnected?.()) return;
 
       const hasPending = Object.keys(useChatStore.getState().pendingOutbound).length > 0;
@@ -273,6 +365,14 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
       } finally {
         isResendingPendingRef.current = false;
       }
+    };
+
+    const flushDeliveredAfterReconnect = () => {
+      if (!wsService.isConnected?.()) return;
+      flushPendingDeliveredAcks({
+        wsService,
+        isConnected: () => Boolean(wsService.isConnected?.())
+      });
     };
 
     const processMissedMessages = (missedMessages) => {
@@ -307,11 +407,13 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
 
         try {
           console.debug(`[ChatSync] attempt ${attemptIndex + 1}`);
+          flushDeliveredAfterReconnect();
           const missedMessages = await fetchAllMissedMessages();
 
           if (!isCurrentSyncConnection(syncCount)) return;
 
           processMissedMessages(missedMessages);
+          flushDeliveredAfterReconnect();
           triggerResendOnce();
           cancelSyncRetryWait();
           console.debug('[ChatSync] success');
@@ -342,6 +444,7 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
     };
 
     const runSync = async () => {
+      // kiem tra co sync dang chay hay khong, neu co thi chi cap nhat connectCount va thoat
       if (isSyncingRef.current) {
         pendingSyncCountRef.current = Math.max(pendingSyncCountRef.current, connectCount);
         return;
@@ -371,7 +474,55 @@ const WebSocketEventBridge = ({ children, isConnected, connectCount, wsService }
     runSync();
   }, [cancelSyncRetryWait, connectCount, isConnected, isCurrentSyncConnection, processIncomingMessage, user, waitForSyncRetry, wsService]);
 
-  return children;
+  const activeLoginApproval = loginApprovals[0] || null;
+
+  const removeActiveLoginApproval = useCallback(() => {
+    if (!activeLoginApproval) return;
+    setLoginApprovals((current) => current.filter((item) =>
+      item.approvalRequestId !== activeLoginApproval.approvalRequestId
+    ));
+  }, [activeLoginApproval]);
+
+  const approveActiveLogin = useCallback(async () => {
+    if (!activeLoginApproval) return;
+    setApprovalActionLoading(true);
+    try {
+      await securityApi.approveLogin(activeLoginApproval.approvalRequestId);
+      removeActiveLoginApproval();
+    } catch (error) {
+      console.error('[security] approve login failed:', error);
+    } finally {
+      setApprovalActionLoading(false);
+    }
+  }, [activeLoginApproval, removeActiveLoginApproval]);
+
+  const rejectActiveLogin = useCallback(async () => {
+    if (!activeLoginApproval) return;
+    setApprovalActionLoading(true);
+    try {
+      await securityApi.rejectLogin(activeLoginApproval.approvalRequestId);
+      removeActiveLoginApproval();
+    } catch (error) {
+      console.error('[security] reject login failed:', error);
+    } finally {
+      setApprovalActionLoading(false);
+    }
+  }, [activeLoginApproval, removeActiveLoginApproval]);
+
+  return (
+    <>
+      {children}
+      {activeLoginApproval && (
+        <LoginApprovalPrompt
+          request={activeLoginApproval}
+          loading={approvalActionLoading}
+          onApprove={approveActiveLogin}
+          onReject={rejectActiveLogin}
+          onClose={removeActiveLoginApproval}
+        />
+      )}
+    </>
+  );
 };
 
 export const useWebSocket = () => {
@@ -383,13 +534,17 @@ export const useWebSocket = () => {
 };
 
 export const WebSocketProvider = ({ children }) => {
-  const { token, isAuthenticated } = useAuth();
+  const { token, isAuthenticated, user } = useAuth();
   const [isConnected, setIsConnected] = useState(false);
   // Incremented on every successful STOMP connect (1 = first, 2+ = reconnect)
   const [connectCount, setConnectCount] = useState(0);
 
   useEffect(() => {
     if (isAuthenticated && token) {
+      if (user?.id) {
+        useChatStore.getState().hydratePendingOutboundForUser(user.id);
+        useChatStore.getState().hydratePendingDeliveredForUser(user.id);
+      }
       wsService.connect(
         token,
         // onConnect receives the running connectCount from stompClient
@@ -404,16 +559,18 @@ export const WebSocketProvider = ({ children }) => {
       );
     } else {
       useChatStore.getState().clearPendingOutbound();
+      useChatStore.getState().clearPendingDelivered();
       wsService.disconnect();
       setIsConnected(false);
       setConnectCount(0);
     }
 
     return () => {
-      useChatStore.getState().clearPendingOutbound();
+      useChatStore.getState().pausePendingOutbound();
+      useChatStore.getState().pausePendingDelivered();
       wsService.disconnect();
     };
-  }, [token, isAuthenticated]);
+  }, [token, isAuthenticated, user?.id]);
 
   return (
     <WebSocketContext.Provider value={{ isConnected, connectCount, wsService }}>

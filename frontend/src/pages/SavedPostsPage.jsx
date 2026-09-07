@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Bookmark, ChevronDown, Clock3, Film, Home, MessageCircle, Menu, Users } from 'lucide-react';
+import { Bell, Bookmark, ChevronDown, Clock3, Film, Home, MessageCircle, Menu, Settings, Users } from 'lucide-react';
 import Header from '../components/layout/Header';
 import PostCard from '../components/social/PostCard';
 import { feedApi, notificationApi, profileApi } from '../services/api';
@@ -39,6 +39,7 @@ const LeftRail = ({ user, navigate, onLogout }) => (
         ['Ky niem', Clock3, null],
         ['Nhom', Users, null],
         ['Thuoc phim', Film, null],
+        ['Cai dat', Settings, '/settings/security'],
       ].map(([label, Icon, path]) => (
         <button
           key={label}

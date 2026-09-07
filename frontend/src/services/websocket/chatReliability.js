@@ -48,8 +48,8 @@ export const sendPendingMessage = (
   }
 
   if (!isTransportConnected(isConnected, wsService)) {
-    store.markMessageFailedByClientMessageId(pending.conversationId, clientMessageId);
-    store.updatePendingOutboundStatus(clientMessageId, 'failed');
+    store.markMessageQueuedByClientMessageId(pending.conversationId, clientMessageId);
+    store.updatePendingOutboundStatus(clientMessageId, 'queued');
     store.clearOutboundInFlight(clientMessageId);
     return false;
   }

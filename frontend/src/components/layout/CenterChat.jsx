@@ -17,10 +17,11 @@ import MessageBubble from '../chat/MessageBubble';
 import Composer from '../chat/Composer';
 import { useAuth } from '../../contexts/AuthContext';
 import { chatApi } from '../../services/api';
+import { queueAndSendDeliveredAck } from '../../services/websocket/deliveredReliability';
 
 const PAGE_SIZE = 30;
 
-const CenterChat = ({ markConversationAsSeen, sendMessage, retryMessage, editMessage, recallMessage, deleteMessageForMe, reactToMessage, setTyping, onOpenGroupSettings }) => {
+const CenterChat = ({ isConnected, wsService, markConversationAsSeen, sendMessage, retryMessage, editMessage, recallMessage, deleteMessageForMe, reactToMessage, setTyping, onOpenGroupSettings }) => {
   const activeConversation = useChatStore(state => state.activeConversation);
   const setActiveConversation = useChatStore(state => state.setActiveConversation);
   const activeConversationDetail = useChatStore(state => state.activeConversationDetail);
@@ -111,6 +112,13 @@ const CenterChat = ({ markConversationAsSeen, sendMessage, retryMessage, editMes
         return { ...m, status };
       });
 
+      normalized.forEach((message) => {
+        queueAndSendDeliveredAck(message, user?.id, {
+          wsService,
+          isConnected: () => Boolean(isConnected && wsService?.isConnected?.())
+        });
+      });
+
       if (append) {
         prependMessages(conversationId, normalized);
       } else {
@@ -129,7 +137,7 @@ const CenterChat = ({ markConversationAsSeen, sendMessage, retryMessage, editMes
     } catch (err) {
       console.error('Failed to fetch conversation messages:', err);
     }
-  }, [markConversationAsSeen, prependMessages, setMessages]);
+  }, [isConnected, markConversationAsSeen, prependMessages, setMessages, user?.id, wsService]);
 
   useEffect(() => {
     if (!activeConversation) return;

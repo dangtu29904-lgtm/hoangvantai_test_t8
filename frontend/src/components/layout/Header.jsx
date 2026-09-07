@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Bell, Compass, Film, Gamepad2, Home, Menu, MessageCircle, Search, Users, User } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { profileApi } from '../../services/api';
 import useNotificationStore from '../../store/notificationStore';
 
@@ -10,6 +10,7 @@ const Header = ({
   onToggleNotifications, 
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const unreadCount = useNotificationStore(state => state.unreadCount);
   const initRealtimeNotifications = useNotificationStore(state => state.initRealtimeNotifications);
 
@@ -75,6 +76,15 @@ const Header = ({
     if (!searchQuery.trim()) return;
     setShowLiveSearch(false);
     navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
+  };
+
+  const navClass = (path) => {
+    const active = location.pathname === path || (path !== '/home' && location.pathname.startsWith(path));
+    return `relative flex h-11 min-w-16 items-center justify-center rounded-lg px-6 transition-colors ${
+      active
+        ? 'text-[#2d88ff] after:absolute after:inset-x-2 after:-bottom-1.5 after:h-1 after:rounded-full after:bg-[#2d88ff]'
+        : 'text-[#b0b3b8] hover:bg-[#3a3b3c]'
+    }`;
   };
 
   return (
@@ -152,20 +162,21 @@ const Header = ({
       <nav className="hidden items-center gap-1 md:flex">
         <button 
           onClick={() => navigate('/home')} 
-          className="flex h-11 min-w-16 items-center justify-center rounded-lg px-6 text-[#b0b3b8] hover:bg-[#3a3b3c] transition-colors" 
+          className={navClass('/home')}
           title="Trang chủ"
         >
           <Home size={22} />
         </button>
         <button 
           onClick={() => navigate('/friends')} 
-          className="flex h-11 min-w-16 items-center justify-center rounded-lg px-6 text-[#b0b3b8] hover:bg-[#3a3b3c] transition-colors" 
+          className={navClass('/friends')}
           title="Bạn bè"
         >
           <Users size={22} />
         </button>
         <button 
-          className="flex h-11 min-w-16 items-center justify-center rounded-lg px-6 text-[#b0b3b8] hover:bg-[#3a3b3c] transition-colors" 
+          onClick={() => navigate('/watch')}
+          className={navClass('/watch')}
           title="Watch"
         >
           <Film size={22} />

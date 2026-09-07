@@ -16,7 +16,7 @@ const MessageBubble = ({
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const isSystemMessage = message.messageType && message.messageType !== 'USER';
-  const isPendingMessage = message.isTemp || message.status === 'sending' || message.status === 'failed';
+  const isPendingMessage = message.isTemp || message.status === 'queued' || message.status === 'sending' || message.status === 'failed';
   const hasRealMessageId = message.id != null && !String(message.id).startsWith('temp-');
   const canUseServerActions = hasRealMessageId && !isPendingMessage;
   const systemTone = theme === 'dark'
@@ -27,6 +27,8 @@ const MessageBubble = ({
     if (!isMine || isSystemMessage) return null;
 
     switch (message.status) {
+      case 'queued':
+        return <Circle size={12} className="ml-1 text-amber-300" title="Dang cho ket noi" />;
       case 'sending':
         return <Circle size={12} className="ml-1 text-gray-300" />;
       case 'failed':
@@ -72,6 +74,7 @@ const MessageBubble = ({
           ) : (
             <div className="h-7 w-7" />
           )}
+
         </div>
       )}
 
@@ -153,6 +156,9 @@ const MessageBubble = ({
           {isMine && message.status === 'failed' && (
             <p className="mt-1 text-right text-[11px] font-semibold text-red-100">
               Không gửi được
+              {message.errorMessage && (
+                <span className="block">{message.errorMessage}</span>
+              )}
               {message.clientMessageId && (
                 <>
                   <span className="mx-1 opacity-75">·</span>
@@ -165,6 +171,12 @@ const MessageBubble = ({
                   </button>
                 </>
               )}
+            </p>
+          )}
+
+          {isMine && message.status === 'queued' && (
+            <p className="mt-1 text-right text-[11px] font-semibold text-amber-100">
+              Dang cho ket noi...
             </p>
           )}
         </div>

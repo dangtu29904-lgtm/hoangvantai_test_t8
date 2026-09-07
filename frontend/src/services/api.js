@@ -1,5 +1,12 @@
 import axios from 'axios';
 
+const AUTH_UPDATED_EVENT = 'auth:updated';
+const AUTH_LOGOUT_EVENT = 'auth:logout';
+const TOKEN_KEY = 'token';
+const REFRESH_TOKEN_KEY = 'refreshToken';
+const USER_KEY = 'user';
+const USER_SESSION_ID_KEY = 'userSessionId';
+
 const api = axios.create({
   baseURL: 'http://localhost:8080', // Backend does not use /api prefix
   headers: {
@@ -7,9 +14,53 @@ const api = axios.create({
   },
 });
 
+let refreshPromise = null;
+
+const buildUserData = (data = {}) => ({
+  id: data.userId,
+  userName: data.userName,
+  email: data.email,
+  avatarUrl: data.avatarUrl,
+  coverUrl: data.coverUrl,
+  role: data.role
+});
+
+const persistAuthResponse = (data = {}) => {
+  if (data.token) localStorage.setItem(TOKEN_KEY, data.token);
+  if (data.refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
+  if (data.userSessionId) localStorage.setItem(USER_SESSION_ID_KEY, String(data.userSessionId));
+
+  if (data.userId) {
+    const userData = buildUserData(data);
+    localStorage.setItem(USER_KEY, JSON.stringify(userData));
+    window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT, {
+      detail: { token: data.token, user: userData }
+    }));
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT, {
+    detail: { token: data.token, user: null }
+  }));
+};
+
+const clearAuthStorage = () => {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  localStorage.removeItem(USER_SESSION_ID_KEY);
+  localStorage.removeItem(USER_KEY);
+  window.dispatchEvent(new Event(AUTH_LOGOUT_EVENT));
+};
+
+const isAuthEndpoint = (url = '') => (
+  url.includes('/auth/login') ||
+  url.includes('/auth/register') ||
+  url.includes('/auth/refresh')
+);
+
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem(TOKEN_KEY);
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -26,12 +77,52 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry &&
+      !isAuthEndpoint(originalRequest.url)
+    ) {
+      const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+
+      if (!refreshToken) {
+        clearAuthStorage();
+        window.location.href = '/login';
+        return Promise.reject(error);
+      }
+
+      originalRequest._retry = true;
+
+      try {
+        if (!refreshPromise) {
+          refreshPromise = axios.post(`${api.defaults.baseURL}/auth/refresh`, { refreshToken }, {
+            headers: { 'Content-Type': 'application/json' }
+          }).finally(() => {
+            refreshPromise = null;
+          });
+        }
+
+        const refreshResponse = await refreshPromise;
+        const nextToken = refreshResponse.data?.token;
+
+        if (!nextToken) {
+          throw new Error('Refresh response missing access token');
+        }
+
+        persistAuthResponse(refreshResponse.data);
+        originalRequest.headers = originalRequest.headers || {};
+        originalRequest.headers.Authorization = `Bearer ${nextToken}`;
+        return api(originalRequest);
+      } catch (refreshError) {
+        clearAuthStorage();
+        window.location.href = '/login';
+        return Promise.reject(refreshError);
+      }
     }
+
     return Promise.reject(error);
   }
 );
@@ -142,6 +233,8 @@ export const notificationApi = {
 export const feedApi = {
   getFeed: async (page = 0, limit = 20) =>
     (await api.get('/user/feed', { params: { page, limit } })).data,
+  getVideoFeed: async (page = 0, limit = 10) =>
+    (await api.get('/user/feed/videos', { params: { page, limit } })).data,
   getUserPosts: async (userId, page = 0, limit = 20) =>
     (await api.get(`/user/posts/user/${userId}`, { params: { page, limit } })).data,
   getPost: async (postId) => (await api.get(`/user/posts/${postId}`)).data,
@@ -210,6 +303,27 @@ export const reportApi = {
     (await api.get('/user/reports', { params: { page, limit } })).data,
 };
 
+export const securityApi = {
+  getSessions: async () => (await api.get('/user/security/sessions')).data,
+  revokeSession: async (sessionId) => (await api.delete(`/user/security/sessions/${sessionId}`)).data,
+  revokeOtherSessions: async () => (await api.delete('/user/security/sessions/others')).data,
+  trustDevice: async (userDeviceId) => (await api.patch(`/user/security/devices/${userDeviceId}/trust`)).data,
+  untrustDevice: async (userDeviceId) => (await api.patch(`/user/security/devices/${userDeviceId}/untrust`)).data,
+  approveLogin: async (approvalRequestId) =>
+    (await api.post(`/user/security/login-approvals/${approvalRequestId}/approve`)).data,
+  rejectLogin: async (approvalRequestId) =>
+    (await api.post(`/user/security/login-approvals/${approvalRequestId}/reject`)).data,
+};
+
+export const authApi = {
+  getLoginApprovalStatus: async (approvalToken) =>
+    (await api.get(`/auth/login-approvals/${approvalToken}/status`)).data,
+  sendLoginOtp: async (approvalToken) =>
+    (await api.post(`/auth/login-approvals/${approvalToken}/otp/send`)).data,
+  verifyLoginOtp: async (approvalToken, payload) =>
+    (await api.post(`/auth/login-approvals/${approvalToken}/otp/verify`, payload)).data,
+};
+
 const cleanParams = (params = {}) =>
   Object.fromEntries(
     Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '')
@@ -226,6 +340,8 @@ export const adminApi = {
   getReportStatistics: async () => (await api.get('/admin/statistics/reports')).data,
   getStoryStatistics: async () => (await api.get('/admin/statistics/stories')).data,
   getChatStatistics: async () => (await api.get('/admin/statistics/chat')).data,
+  getActuatorMetric: async (metricName) => (await api.get(`/actuator/metrics/${metricName}`)).data,
+  getPrometheusMetrics: async () => (await api.get('/actuator/prometheus')).data,
   getReports: async ({ status, targetType, reason, page = 0, limit = 20 } = {}) =>
     (await api.get('/admin/reports', { params: cleanParams({ status, targetType, reason, page, limit }) })).data,
   getReport: async (reportId) => (await api.get(`/admin/reports/${reportId}`)).data,

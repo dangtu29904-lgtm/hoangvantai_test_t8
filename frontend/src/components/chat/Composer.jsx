@@ -27,7 +27,7 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
     }
   }, [content]);
 
-  const canSend = (Boolean(content.trim()) || uploadIds.length > 0) && isConnected && Boolean(user) && !uploading;
+  const canSend = (Boolean(content.trim()) || uploadIds.length > 0) && Boolean(user) && !uploading;
 
   const handleSend = () => {
     if (!canSend) return;
@@ -42,7 +42,8 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
     const replyToMessageId = replyTo?.id ?? null;
 
     // 1. Create temporary message for optimistic UI
-    const tempMsg = createTempMessage(trimmed, conversationId, user.id);
+    const initialStatus = isConnected ? 'sending' : 'queued';
+    const tempMsg = createTempMessage(trimmed, conversationId, user.id, initialStatus);
     if (messageAttachments.length > 0) {
       tempMsg.attachments = messageAttachments;
     }
@@ -66,7 +67,8 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
       replyTo: tempMsg.replyTo ?? null,
       uploadIds: messageUploadIds,
       attachments: messageAttachments,
-      status: 'sending',
+      senderId: user.id,
+      status: initialStatus,
       createdAt: tempMsg.sentAt
     });
     
@@ -78,9 +80,11 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
       textareaRef.current.style.height = 'auto';
     }
 
-    // 4. Send via WebSocket STOMP
-    const didSend = sendMessage(conversationId, trimmed, tempMsg.clientMessageId, replyToMessageId, messageUploadIds);
-    if (!didSend) {
+    // 4. Send via WebSocket STOMP, or keep it queued until reconnect
+    const didSend = isConnected
+      ? sendMessage(conversationId, trimmed, tempMsg.clientMessageId, replyToMessageId, messageUploadIds)
+      : false;
+    if (isConnected && !didSend) {
       markMessageFailedByClientMessageId(conversationId, tempMsg.clientMessageId);
       updatePendingOutboundStatus(tempMsg.clientMessageId, 'failed');
     }
@@ -182,7 +186,7 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
           placeholder={uploading ? 'Đang tải file lên...' : 'Aa'}
           className={`max-h-30 flex-1 resize-none border-none bg-transparent px-1 py-2 text-[15px] outline-none focus:ring-0 placeholder:text-gray-500 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}
           rows={1}
-          disabled={!isConnected || uploading}
+          disabled={uploading}
         />
 
         <button className="shrink-0 self-center rounded-full p-2 text-gray-500 transition-colors hover:bg-gray-200 hover:text-messenger">
@@ -201,8 +205,8 @@ const Composer = ({ conversationId, sendMessage, setTyping, replyTo, onClearRepl
         </button>
       </div>
       {!isConnected && (
-        <div className="text-center mt-2 text-xs text-red-500 font-medium animate-pulse">
-          Reconnecting to chat...
+        <div className="mt-2 text-center text-xs font-medium text-amber-500">
+          Mat ket noi, tin moi se duoc luu tam va tu gui khi online lai.
         </div>
       )}
     </div>

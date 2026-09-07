@@ -240,6 +240,7 @@ const LeftRail = ({ user, navigate, onLogout }) => (
         ['Ky niem', Clock3, null],
         ['Nhom', Users, null],
         ['Thuoc phim', Film, null],
+        ['Cai dat', Settings, '/settings/security'],
       ].map(([label, Icon, path]) => (
         <button
           key={label}

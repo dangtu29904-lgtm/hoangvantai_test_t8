@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Activity,
   AlertTriangle,
   ArrowLeft,
   BarChart3,
@@ -12,6 +13,7 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  RefreshCw,
   ShieldCheck,
   Trash2,
   UserMinus,
@@ -26,6 +28,24 @@ const REPORT_TARGETS = ['POST', 'COMMENT', 'USER'];
 const REPORT_REASONS = ['SPAM', 'HARASSMENT', 'HATE_SPEECH', 'VIOLENCE', 'SEXUAL_CONTENT', 'SCAM', 'FALSE_INFORMATION', 'OTHER'];
 const METRICS = ['USERS', 'POSTS', 'COMMENTS', 'MESSAGES', 'STORIES', 'REPORTS'];
 const PERIODS = ['SEVEN_DAYS', 'THIRTY_DAYS', 'NINETY_DAYS'];
+const CHAT_REALTIME_METRICS = [
+  { name: 'chat.websocket.sessions.active', label: 'WebSocket sessions', preferred: 'VALUE', group: 'connection' },
+  { name: 'chat.websocket.connected', label: 'WS connected', preferred: 'COUNT', group: 'connection' },
+  { name: 'chat.websocket.disconnected', label: 'WS disconnected', preferred: 'COUNT', group: 'connection' },
+  { name: 'chat.websocket.errors', label: 'WS errors', preferred: 'COUNT', group: 'error' },
+  { name: 'chat.messages.sent', label: 'Messages sent', preferred: 'COUNT', group: 'message' },
+  { name: 'chat.messages.delivered', label: 'Delivered ACK', preferred: 'COUNT', group: 'message' },
+  { name: 'chat.messages.seen', label: 'Seen ACK', preferred: 'COUNT', group: 'message' },
+  { name: 'chat.rate_limited', label: 'Rate limited', preferred: 'COUNT', group: 'error' },
+  { name: 'chat.sync.requests', label: 'Offline sync requests', preferred: 'COUNT', group: 'sync' },
+  { name: 'chat.sync.messages', label: 'Synced messages', preferred: 'TOTAL', group: 'sync' },
+  { name: 'chat.messages.stage.delay', label: 'Avg stage delay', preferred: 'TOTAL_TIME', group: 'latency', divisor: 'COUNT' },
+  { name: 'chat.typing.events', label: 'Typing events', preferred: 'COUNT', group: 'message' },
+  { name: 'chat.messages.reactions', label: 'Message reactions', preferred: 'COUNT', group: 'message' },
+  { name: 'chat.messages.edited', label: 'Message edits', preferred: 'COUNT', group: 'message' },
+  { name: 'chat.messages.recalled', label: 'Message recalls', preferred: 'COUNT', group: 'message' },
+  { name: 'chat.messages.deleted_for_me', label: 'Delete-for-me', preferred: 'COUNT', group: 'message' },
+];
 
 const statusLabel = {
   PENDING: 'Chờ xử lý',
@@ -67,6 +87,17 @@ const periodLabel = {
 };
 
 const formatNumber = (value) => new Intl.NumberFormat('vi-VN').format(Number(value || 0));
+
+const formatMetricNumber = (value) => {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return '0';
+  if (Math.abs(number) >= 1000) return formatNumber(Math.round(number));
+  return number % 1 === 0 ? String(number) : number.toFixed(2);
+};
+
+const metricMeasurement = (metric, statistic) => (
+  metric?.measurements?.find((item) => item.statistic === statistic)?.value ?? 0
+);
 
 const formatDateTime = (value) => {
   if (!value) return 'Chưa có';
@@ -383,6 +414,8 @@ const StatisticsView = () => {
         {loading && !growth ? <LoadingBlock /> : error ? <ErrorBlock message={error} onRetry={load} /> : <GrowthChart data={growth} />}
       </Section>
 
+      <ChatRealtimeHealth />
+
       <div className="admin-three-col">
         <KeyValuePanel title="Report statistics" data={reportStats} />
         <KeyValuePanel title="Story statistics" data={storyStats} />
@@ -425,6 +458,181 @@ const GrowthChart = ({ data }) => {
           );
         })}
       </div>
+    </div>
+  );
+};
+
+const resolveMetricValue = (config, data) => {
+  if (!data) return 0;
+
+  if (config.divisor) {
+    const total = metricMeasurement(data, config.preferred);
+    const count = metricMeasurement(data, config.divisor);
+    return count > 0 ? total / count : 0;
+  }
+
+  return metricMeasurement(data, config.preferred);
+};
+
+const ChatRealtimeHealth = () => {
+  const [metrics, setMetrics] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [updatedAt, setUpdatedAt] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const results = await Promise.all(
+        CHAT_REALTIME_METRICS.map(async (config) => {
+          try {
+            const data = await adminApi.getActuatorMetric(config.name);
+            return {
+              ...config,
+              data,
+              value: resolveMetricValue(config, data),
+              missing: false,
+            };
+          } catch (err) {
+            if (err?.response?.status === 404) {
+              return {
+                ...config,
+                data: null,
+                value: 0,
+                missing: true,
+              };
+            }
+            throw err;
+          }
+        })
+      );
+
+      setMetrics(results);
+      setUpdatedAt(new Date());
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const valueOf = (name) => metrics.find((metric) => metric.name === name)?.value ?? 0;
+  const activeSessions = valueOf('chat.websocket.sessions.active');
+  const sent = valueOf('chat.messages.sent');
+  const delivered = valueOf('chat.messages.delivered');
+  const seen = valueOf('chat.messages.seen');
+  const rateLimited = valueOf('chat.rate_limited');
+  const websocketErrors = valueOf('chat.websocket.errors');
+  const syncMessages = valueOf('chat.sync.messages');
+  const avgDelay = valueOf('chat.messages.stage.delay');
+
+  return (
+    <Section
+      title="Realtime Chat Health"
+      subtitle="Du lieu lay tu Spring Boot Actuator/Micrometer, dung de debug chat realtime"
+      action={
+        <button
+          onClick={load}
+          disabled={loading}
+          className="inline-flex items-center gap-2 rounded-xl bg-[#1877f2] px-4 py-2 text-sm font-bold text-white hover:bg-[#2d88ff] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          Refresh
+        </button>
+      }
+    >
+      {error ? (
+        <ErrorBlock message={error} onRetry={load} />
+      ) : (
+        <div className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <RealtimeHealthCard
+              icon={Activity}
+              label="Active sessions"
+              value={activeSessions}
+              detail="So STOMP WebSocket session dang mo tren instance hien tai"
+              tone="blue"
+            />
+            <RealtimeHealthCard
+              icon={MessageSquare}
+              label="Send flow"
+              value={sent}
+              detail={`Delivered ${formatMetricNumber(delivered)} · Seen ${formatMetricNumber(seen)}`}
+              tone="green"
+            />
+            <RealtimeHealthCard
+              icon={AlertTriangle}
+              label="Protection"
+              value={rateLimited + websocketErrors}
+              detail={`Rate limited ${formatMetricNumber(rateLimited)} · WS errors ${formatMetricNumber(websocketErrors)}`}
+              tone="rose"
+            />
+            <RealtimeHealthCard
+              icon={BarChart3}
+              label="Recovery"
+              value={syncMessages}
+              detail={`Avg delivered/seen delay ${formatMetricNumber(avgDelay)}s`}
+              tone="amber"
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#1f2228]">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+              <div>
+                <p className="text-sm font-black text-white">Metric details</p>
+                <p className="text-xs text-[#8f9aaa]">
+                  {updatedAt ? `Updated ${updatedAt.toLocaleTimeString('vi-VN')}` : 'Chua co du lieu'}
+                </p>
+              </div>
+              {loading && <Loader2 size={18} className="animate-spin text-[#7bb2ff]" />}
+            </div>
+            <div className="grid divide-y divide-white/10 md:grid-cols-2 md:divide-x md:divide-y-0">
+              {metrics.map((metric) => (
+                <div key={metric.name} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-white">{metric.label}</p>
+                    <p className="truncate text-xs text-[#8f9aaa]">{metric.name}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-black text-white">{formatMetricNumber(metric.value)}</p>
+                    {metric.missing && <p className="text-[11px] font-bold uppercase text-amber-300">Not emitted</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+};
+
+const RealtimeHealthCard = ({ icon: Icon, label, value, detail, tone }) => {
+  const styles = {
+    blue: 'bg-blue-500/15 text-blue-200 ring-blue-400/20',
+    green: 'bg-emerald-500/15 text-emerald-200 ring-emerald-400/20',
+    rose: 'bg-rose-500/15 text-rose-200 ring-rose-400/20',
+    amber: 'bg-amber-500/15 text-amber-200 ring-amber-400/20',
+  }[tone] || 'bg-white/10 text-white ring-white/10';
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-[#1f2228] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-[#8f9aaa]">{label}</p>
+          <p className="mt-2 text-3xl font-black text-white">{formatMetricNumber(value)}</p>
+        </div>
+        <div className={`rounded-2xl p-3 ring-1 ${styles}`}>
+          <Icon size={22} />
+        </div>
+      </div>
+      <p className="mt-3 text-sm font-semibold text-[#b8c0cc]">{detail}</p>
     </div>
   );
 };
@@ -556,6 +764,7 @@ const ReportsView = () => {
   const [error, setError] = useState('');
   const [resolutionModal, setResolutionModal] = useState(null);
   const [suspendModal, setSuspendModal] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const loadReports = useCallback(async () => {
     setLoading(true);
@@ -626,24 +835,47 @@ const ReportsView = () => {
   const moderateTarget = useCallback(async (action, reason = '') => {
     if (!selectedReport) return;
     setNotice('');
+    setActionLoading(true);
     try {
-      if (action === 'remove-post') await adminApi.removePost(selectedReport.targetId);
-      if (action === 'remove-comment') await adminApi.removeComment(selectedReport.targetId);
+      if (action === 'remove-post') {
+        await adminApi.removePost(selectedReport.targetId);
+        const nextReport = await adminApi.resolveReport(selectedReport.id, 'Admin da go bai viet bi bao cao.');
+        applyReportResponse(nextReport);
+        await loadReports();
+        setNotice('Da go bai viet va chuyen report sang Da xu ly.');
+        return;
+      }
+      if (action === 'remove-comment') {
+        await adminApi.removeComment(selectedReport.targetId);
+        const nextReport = await adminApi.resolveReport(selectedReport.id, 'Admin da go binh luan bi bao cao.');
+        applyReportResponse(nextReport);
+        await loadReports();
+        setNotice('Da go binh luan va chuyen report sang Da xu ly.');
+        return;
+      }
       if (action === 'suspend-user') await adminApi.suspendUser(selectedReport.targetId, reason);
       if (action === 'unsuspend-user') await adminApi.unsuspendUser(selectedReport.targetId);
       setSuspendModal(null);
       setNotice('Moderation action đã thực hiện xong. Trạng thái report chưa tự đổi; hãy Resolve/Reject nếu cần.');
     } catch (err) {
       setNotice(apiErrorMessage(err));
+    } finally {
+      setActionLoading(false);
     }
-  }, [selectedReport]);
+  }, [loadReports, selectedReport]);
 
   const targetAction = useMemo(() => {
     if (!selectedReport) return null;
     if (selectedReport.targetType === 'POST') {
+      if (actionLoading) {
+        return <button disabled className="rounded-xl bg-rose-500 px-4 py-2 text-sm font-bold text-white opacity-60"><Trash2 size={16} className="mr-2 inline" />Dang go...</button>;
+      }
       return <button onClick={() => moderateTarget('remove-post')} className="rounded-xl bg-rose-500 px-4 py-2 text-sm font-bold text-white hover:bg-rose-400"><Trash2 size={16} className="mr-2 inline" />Gỡ nội dung</button>;
     }
     if (selectedReport.targetType === 'COMMENT') {
+      if (actionLoading) {
+        return <button disabled className="rounded-xl bg-rose-500 px-4 py-2 text-sm font-bold text-white opacity-60"><Trash2 size={16} className="mr-2 inline" />Dang go...</button>;
+      }
       return <button onClick={() => moderateTarget('remove-comment')} className="rounded-xl bg-rose-500 px-4 py-2 text-sm font-bold text-white hover:bg-rose-400"><Trash2 size={16} className="mr-2 inline" />Gỡ bình luận</button>;
     }
     if (selectedReport.targetType === 'USER') {
@@ -655,7 +887,7 @@ const ReportsView = () => {
       );
     }
     return null;
-  }, [moderateTarget, selectedReport]);
+  }, [actionLoading, moderateTarget, selectedReport]);
 
   return (
     <div className="space-y-6">

@@ -12,6 +12,8 @@ import SavedPostsPage from './pages/SavedPostsPage';
 import SearchResultsPage from './pages/SearchResultsPage';
 import PostDetailPage from './pages/PostDetailPage';
 import AdminPage from './pages/admin/AdminPage';
+import WatchPage from './pages/WatchPage';
+import SecuritySettingsPage from './pages/SecuritySettingsPage';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated } = useAuth();
@@ -49,6 +51,7 @@ function App() {
         <Route path="/register" element={<Register />} />
         <Route element={<ProtectedLayout />}>
           <Route path="/home" element={<DashboardPage />} />
+          <Route path="/watch" element={<WatchPage />} />
           <Route path="/home/profile" element={<UserProfilePage />} />
           <Route path="/chat/*" element={<Home />} />
           <Route path="/friends" element={<Home />} />
@@ -58,6 +61,7 @@ function App() {
           <Route path="/profile/:userId" element={<UserProfilePage />} />
           <Route path="/posts/:postId" element={<PostDetailPage />} />
           <Route path="/search" element={<SearchResultsPage />} />
+          <Route path="/settings/security" element={<SecuritySettingsPage />} />
         </Route>
         <Route
           path="/admin/*"

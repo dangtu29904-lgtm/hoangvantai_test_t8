@@ -5,6 +5,7 @@ import useChatStore from '../../store/chatStore';
 import { useAuth } from '../../contexts/AuthContext';
 import MessageBubble from '../chat/MessageBubble';
 import Composer from '../chat/Composer';
+import { queueAndSendDeliveredAck } from '../../services/websocket/deliveredReliability';
 
 const tabs = [
   { id: 'all', label: 'Tất cả' },
@@ -59,7 +60,7 @@ const MessengerPanel = ({ chatActions, onClose, onOpenMessenger, onNewConversati
   const onlineUsers = useChatStore(state => state.onlineUsers);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const typingUserId = useChatStore(state => state.typingUsers[selectedConversation?.id]);
-  const { isConnected, sendMessage, retryMessage, editMessage, recallMessage, deleteMessageForMe, reactToMessage, setTyping, markConversationAsSeen } = chatActions;
+  const { isConnected, wsService, sendMessage, retryMessage, editMessage, recallMessage, deleteMessageForMe, reactToMessage, setTyping, markConversationAsSeen } = chatActions;
   const { user } = useAuth();
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
@@ -172,6 +173,12 @@ const MessengerPanel = ({ chatActions, onClose, onOpenMessenger, onNewConversati
 
     try {
       const hydrated = (await fetchAllConversationMessages(conversation.id)).map(normalizeMessage);
+      hydrated.forEach((message) => {
+        queueAndSendDeliveredAck(message, user?.id, {
+          wsService,
+          isConnected: () => Boolean(isConnected && wsService?.isConnected?.())
+        });
+      });
       setMessages(conversation.id, hydrated);
       markConversationSeen(conversation.id);
       await markConversationAsSeen(conversation.id);

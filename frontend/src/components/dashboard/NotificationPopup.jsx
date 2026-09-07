@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { X, Bell, Check } from 'lucide-react';
+import { X, Bell, Check, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import useNotificationStore from '../../store/notificationStore';
 
@@ -8,6 +8,30 @@ const Avatar = ({ name = 'U', src }) => (
     {src ? <img src={src} alt={name} className="h-full w-full object-cover" /> : name.charAt(0).toUpperCase()}
   </div>
 );
+
+const NotificationAvatar = ({ item }) => {
+  if (item.type === 'SECURITY_LOGIN') {
+    return (
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1877f2]/20 text-[#8ab4f8]">
+        <ShieldCheck size={20} />
+      </div>
+    );
+  }
+
+  return <Avatar name={item.actorName} src={item.actorAvatarUrl} />;
+};
+
+const NotificationText = ({ item }) => {
+  if (item.type === 'SECURITY_LOGIN') {
+    return <p className="font-semibold text-white">{item.message}</p>;
+  }
+
+  return (
+    <p>
+      <strong className="font-bold">{item.actorName}</strong> {item.message}
+    </p>
+  );
+};
 
 const NotificationPopup = ({ onClose }) => {
   const navigate = useNavigate();
@@ -70,11 +94,9 @@ const NotificationPopup = ({ onClose }) => {
                 !item.read ? 'bg-[#263951]/70' : ''
               }`}
             >
-              <Avatar name={item.actorName} src={item.actorAvatarUrl} />
+              <NotificationAvatar item={item} />
               <div className="min-w-0 flex-1 text-sm">
-                <p>
-                  <strong className="font-bold">{item.actorName}</strong> {item.message}
-                </p>
+                <NotificationText item={item} />
                 <small className="text-xs text-[#b0b3b8]">
                   {item.createdAt ? new Date(item.createdAt).toLocaleString('vi-VN') : ''}
                 </small>

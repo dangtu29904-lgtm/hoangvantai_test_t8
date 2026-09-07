@@ -20,7 +20,7 @@ const DEFAULT_COVER = 'https://images.unsplash.com/photo-1519681393784-d12026793
 
 const UserProfilePage = () => {
   const { userId: paramUserId } = useParams();
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, updateUser } = useAuth();
   const navigate = useNavigate();
   const setActiveConversation = useChatStore(state => state.setActiveConversation);
   const chatActions = useChatSocket();
@@ -52,6 +52,20 @@ const UserProfilePage = () => {
   const [showComposer, setShowComposer] = useState(false);
 
   const coverInputRef = useRef(null);
+  const avatarInputRef = useRef(null);
+
+  const syncCurrentUserProfile = (updatedProfile) => {
+    if (!updatedProfile || !isOwnProfile) return;
+
+    updateUser?.({
+      id: updatedProfile.id,
+      userName: updatedProfile.userName,
+      email: updatedProfile.email,
+      avatarUrl: updatedProfile.avatarUrl,
+      coverUrl: updatedProfile.coverUrl,
+      role: currentUser?.role,
+    });
+  };
 
   const loadFriends = useCallback(async (page = 0) => {
     if (!targetUserId) return;
@@ -111,13 +125,37 @@ const UserProfilePage = () => {
     try {
       const uploaded = await chatApi.uploadFile(file);
       const newCoverUrl = uploaded.url || uploaded.secureUrl;
+      if (!newCoverUrl) throw new Error('Khong lay duoc URL anh bia');
       setEditCoverUrl(newCoverUrl);
       if (isOwnProfile) {
-        await profileApi.updateMe({ coverUrl: newCoverUrl });
-        setProfile(prev => ({ ...prev, coverUrl: newCoverUrl }));
+        const updated = await profileApi.updateMe({ coverUrl: newCoverUrl });
+        setProfile(updated);
+        syncCurrentUserProfile(updated);
       }
     } catch (err) {
       alert('Tải ảnh bìa thất bại!');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleAvatarUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const uploaded = await chatApi.uploadFile(file);
+      const newAvatarUrl = uploaded.url || uploaded.secureUrl;
+      if (!newAvatarUrl) throw new Error('Khong lay duoc URL avatar');
+      setEditAvatarUrl(newAvatarUrl);
+      if (isOwnProfile) {
+        const updated = await profileApi.updateMe({ avatarUrl: newAvatarUrl });
+        setProfile(updated);
+        syncCurrentUserProfile(updated);
+      }
+    } catch (err) {
+      alert('Tai anh dai dien that bai!');
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -130,6 +168,7 @@ const UserProfilePage = () => {
         coverUrl: editCoverUrl,
       });
       setProfile(updated);
+      syncCurrentUserProfile(updated);
       setShowEditModal(false);
     } catch (err) {
       alert('Cập nhật thông tin thất bại: ' + (err.response?.data?.message || err.message));
@@ -241,7 +280,7 @@ const UserProfilePage = () => {
     <div className="h-screen w-full overflow-y-auto bg-[#18191a] text-[#e4e6eb] font-sans">
       {/* Shared App Header */}
       <Header 
-        currentUser={currentUser} 
+        currentUser={isOwnProfile ? (profile || currentUser) : currentUser} 
         onToggleChat={() => setPopup(popup === 'chat' ? null : 'chat')} 
         onToggleNotifications={() => setPopup(popup === 'notifications' ? null : 'notifications')} 
         unreadNotifications={unreadNotifications} 
@@ -298,13 +337,22 @@ const UserProfilePage = () => {
                     )}
                   </div>
                   {isOwnProfile && (
-                    <button 
-                      onClick={() => setShowEditModal(true)}
-                      className="absolute bottom-2 right-2 rounded-full bg-[#3a3b3c] p-2.5 text-white hover:bg-[#4e4f50] border-2 border-[#242526]"
-                      title="Đổi ảnh đại diện"
-                    >
-                      <Camera size={18} />
-                    </button>
+                    <>
+                      <input
+                        type="file"
+                        ref={avatarInputRef}
+                        onChange={handleAvatarUpload}
+                        accept="image/*"
+                        className="hidden"
+                      />
+                      <button 
+                        onClick={() => avatarInputRef.current?.click()}
+                        className="absolute bottom-2 right-2 rounded-full bg-[#3a3b3c] p-2.5 text-white hover:bg-[#4e4f50] border-2 border-[#242526]"
+                        title="Đổi ảnh đại diện"
+                      >
+                        <Camera size={18} />
+                      </button>
+                    </>
                   )}
                 </div>
 
@@ -754,6 +802,40 @@ const UserProfilePage = () => {
               </button>
             </div>
             <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div className="grid gap-4 sm:grid-cols-[120px_1fr]">
+                <div>
+                  <p className="mb-2 text-xs font-bold uppercase text-[#b0b3b8]">Avatar</p>
+                  <div className="h-24 w-24 overflow-hidden rounded-full border border-[#4e4f50] bg-[#3a3b3c]">
+                    {editAvatarUrl ? (
+                      <img src={editAvatarUrl} alt="Avatar preview" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-2xl font-bold text-white">
+                        {profile.userName?.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => avatarInputRef.current?.click()}
+                    className="mt-2 rounded-lg bg-[#3a3b3c] px-3 py-2 text-xs font-bold text-white hover:bg-[#4e4f50]"
+                  >
+                    Chon anh
+                  </button>
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-bold uppercase text-[#b0b3b8]">Anh bia</p>
+                  <div className="h-24 overflow-hidden rounded-lg border border-[#4e4f50] bg-[#3a3b3c]">
+                    <img src={editCoverUrl || DEFAULT_COVER} alt="Cover preview" className="h-full w-full object-cover" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => coverInputRef.current?.click()}
+                    className="mt-2 rounded-lg bg-[#3a3b3c] px-3 py-2 text-xs font-bold text-white hover:bg-[#4e4f50]"
+                  >
+                    Chon anh bia
+                  </button>
+                </div>
+              </div>
               <div>
                 <label className="block text-xs font-bold text-[#b0b3b8] uppercase mb-1">Ảnh đại diện (URL)</label>
                 <input 
