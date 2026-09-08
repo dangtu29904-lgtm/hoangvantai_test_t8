@@ -150,6 +150,89 @@ Use `ws-ttr-report.md` for the report row:
 TTR WebSocket disconnect -> CONNECT + sync (s)
 ```
 
+## Run WebSocket Send/ACK Load
+
+This measures:
+
+```text
+SEND /app/chat.send -> MESSAGE /user/queue/messages.ack
+```
+
+Use a sender token and a conversation where that sender is a member:
+
+```powershell
+$env:TOKEN="sender_access_token"
+$env:CONVERSATION_ID="1"
+$env:CONNECTIONS="1"
+$env:MESSAGES_PER_CONNECTION="10"
+$env:SEND_RATE_PER_SECOND="2"
+
+node tools/performance/ws-send-ack-load.mjs
+```
+
+For multiple sender tokens:
+
+```powershell
+$env:SENDER_TOKENS="token_a,token_b,token_c"
+$env:CONVERSATION_ID="1"
+$env:CONNECTIONS="3"
+
+node tools/performance/ws-send-ack-load.mjs
+```
+
+The script creates `ws-send-ack-results.md` with send-to-ACK p50/p95/p99,
+timeout count, actual message rate, and error events.
+
+## Run Delivered/Seen ACK Load
+
+This measures:
+
+```text
+recipient SEND /app/chat.delivered or /app/chat.seen
+-> sender receives /user/queue/messages.delivered or /user/queue/messages.seen
+```
+
+You need:
+
+- `RECIPIENT_TOKEN`: token of the message recipient
+- `SENDER_TOKEN`: token of the original message sender
+- `MESSAGE_IDS`: message ids that belong to that sender/recipient conversation
+
+```powershell
+$env:RECIPIENT_TOKEN="recipient_access_token"
+$env:SENDER_TOKEN="sender_access_token"
+$env:MESSAGE_IDS="101,102,103"
+$env:ACK_COUNT="3"
+$env:DELIVERED_PERCENT="80"
+$env:ACK_RATE_PER_SECOND="5"
+
+node tools/performance/ws-delivered-seen-load.mjs
+```
+
+The script creates `ws-delivered-seen-results.md` with delivered/seen p95/p99,
+timeout count, and error events.
+
+## Run Ordering Concurrency
+
+This opens multiple sender sockets and sends messages into the same
+conversation concurrently. It checks duplicate `sequenceNumber` values from ACK
+responses.
+
+Use multiple real sender tokens if possible. If only one token is used, keep
+`MESSAGES_PER_SENDER` low to avoid chat rate-limit.
+
+```powershell
+$env:SENDER_TOKENS="token_a,token_b"
+$env:CONVERSATION_ID="1"
+$env:SENDERS="2"
+$env:MESSAGES_PER_SENDER="5"
+
+node tools/performance/ws-ordering-concurrency.mjs
+```
+
+The script creates `ws-ordering-concurrency-results.md` with ACK count, timeout
+count, sequence conflict count, sequence gaps, and ACK p95/p99.
+
 ## Run Redis TTR
 
 This intentionally stops and starts Redis in a dev/test environment. Do not run
